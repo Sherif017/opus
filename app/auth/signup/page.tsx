@@ -150,7 +150,7 @@ export default function SignupPage() {
             loading={loading}
             className="w-full"
           >
-            S'inscrire
+            S&apos;inscrire
           </Button>
         </form>
 

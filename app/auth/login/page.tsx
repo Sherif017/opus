@@ -108,7 +108,7 @@ export default function LoginPage() {
         <p className="mt-6 text-center text-gray-600">
           Pas encore de compte?{' '}
           <a href="/auth/signup" className="text-blue-600 hover:underline">
-            S'inscrire
+            S&apos;inscrire
           </a>
         </p>
       </Card>
