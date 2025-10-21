@@ -1,13 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Card } from '@/components/ui/Card'
 import { LoginData } from '@/lib/types'
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const success = searchParams.get('success')
@@ -45,7 +45,6 @@ export default function LoginPage() {
         throw new Error(data.error || 'Erreur connexion')
       }
 
-      // Rediriger vers dashboard
       router.push('/dashboard')
     } catch (error) {
       setErrors({
@@ -113,5 +112,13 @@ export default function LoginPage() {
         </p>
       </Card>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Chargement...</div>}>
+      <LoginContent />
+    </Suspense>
   )
 }
