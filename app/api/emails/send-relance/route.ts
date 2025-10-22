@@ -1,15 +1,25 @@
-import { Resend } from 'resend'
 import { NextRequest, NextResponse } from 'next/server'
-
-const resend = new Resend(process.env.RESEND_API_KEY)
 
 export async function POST(req: NextRequest) {
   try {
+    const apiKey = process.env.RESEND_API_KEY
+
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: 'Clé API Resend non configurée' },
+        { status: 500 }
+      )
+    }
+
     const { prospectEmail, prospectName, relanceText, companyName } = await req.json()
 
     if (!prospectEmail) {
       return NextResponse.json({ error: 'Email du prospect requis' }, { status: 400 })
     }
+
+    // Importer Resend seulement à l'exécution
+    const { Resend } = await import('resend')
+    const resend = new Resend(apiKey)
 
     const result = await resend.emails.send({
       from: 'noreply@opus.local',
