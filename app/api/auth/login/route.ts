@@ -14,6 +14,10 @@ export async function POST(req: NextRequest) {
       throw new Error(error.message)
     }
 
+    if (!data.session) {
+      throw new Error('Erreur session')
+    }
+
     // Créer réponse avec cookie session
     const response = NextResponse.json(
       {
@@ -24,7 +28,7 @@ export async function POST(req: NextRequest) {
     )
 
     // Sauvegarder token dans cookie
-    response.cookies.set('auth_token', data.session?.access_token || '', {
+    response.cookies.set('auth_token', data.session.access_token, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
