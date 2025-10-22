@@ -1,13 +1,21 @@
-import OpenAI from 'openai'
 import { NextRequest, NextResponse } from 'next/server'
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
 
 export async function POST(req: NextRequest) {
   try {
+    const apiKey = process.env.OPENAI_API_KEY
+
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: 'Clé API OpenAI non configurée' },
+        { status: 500 }
+      )
+    }
+
     const { prospectName, lastContact, companyName, prospectEmail } = await req.json()
+
+    // Importer OpenAI seulement à l'exécution, pas au build
+    const { default: OpenAI } = await import('openai')
+    const openai = new OpenAI({ apiKey })
 
     const message = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
