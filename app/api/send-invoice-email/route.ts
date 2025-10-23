@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
 
+export const dynamic = 'force-dynamic'
+
 export async function POST(req: NextRequest) {
   try {
     const { factureData, lignes, clientEmail, clientName, entrepriseData } = await req.json()
@@ -9,13 +11,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: 'Données manquantes' },
         { status: 400 }
-      )
-    }
-
-    if (!process.env.RESEND_API_KEY) {
-      return NextResponse.json(
-        { error: 'Clé API Resend non configurée' },
-        { status: 500 }
       )
     }
 

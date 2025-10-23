@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+export const dynamic = 'force-dynamic'
+
 export async function POST(req: NextRequest) {
   try {
     const apiKey = process.env.RESEND_API_KEY
@@ -16,7 +18,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Email du prospect requis' }, { status: 400 })
     }
 
-    // Importer Resend seulement à l'exécution
+    // Importer Resend à l'exécution
     const { Resend } = await import('resend')
     const resend = new Resend(apiKey)
 
