@@ -12,6 +12,13 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    if (!process.env.RESEND_API_KEY) {
+      return NextResponse.json(
+        { error: 'Clé API Resend non configurée' },
+        { status: 500 }
+      )
+    }
+
     const resend = new Resend(process.env.RESEND_API_KEY)
 
     // Générer le PDF
