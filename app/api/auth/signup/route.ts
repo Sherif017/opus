@@ -41,6 +41,13 @@ export async function POST(req: NextRequest) {
     })
 
     if (authError) {
+      // Détecter si c'est une erreur d'email déjà existant
+      if (authError.message.includes('already registered') || authError.message.includes('User already exists')) {
+        return NextResponse.json(
+          { error: 'Cette adresse email est déjà connectée à un compte' },
+          { status: 400 }
+        )
+      }
       throw new Error(authError.message)
     }
 
