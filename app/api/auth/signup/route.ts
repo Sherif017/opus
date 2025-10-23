@@ -31,6 +31,21 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // ✅ VÉRIFIER SI L'EMAIL EXISTE DÉJÀ dans la table utilisateurs
+    const { data: existingUser, error: checkError } = await supabase
+      .from('utilisateurs')
+      .select('email')
+      .eq('email', email)
+      .single()
+
+    if (existingUser) {
+      // L'email existe déjà
+      return NextResponse.json(
+        { error: 'Cet email est déjà lié à un compte' },
+        { status: 400 }
+      )
+    }
+
     // 1. Créer utilisateur Supabase Auth avec confirmation d'email
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
@@ -41,10 +56,10 @@ export async function POST(req: NextRequest) {
     })
 
     if (authError) {
-      // Détecter si c'est une erreur d'email déjà existant
+      // Détecter si c'est une erreur d'email déjà existant dans Auth
       if (authError.message.includes('already registered') || authError.message.includes('User already exists')) {
         return NextResponse.json(
-          { error: 'Cette adresse email est déjà connectée à un compte' },
+          { error: 'Cet email est déjà lié à un compte' },
           { status: 400 }
         )
       }
@@ -61,7 +76,6 @@ export async function POST(req: NextRequest) {
       .insert([
         {
           nom: nomEntreprise,
-          email: email,
           slug: nomEntreprise.toLowerCase().replace(/\s+/g, '-') + '-' + Date.now(),
         },
       ])
@@ -69,6 +83,7 @@ export async function POST(req: NextRequest) {
       .single()
 
     if (companyError) {
+      console.error('Company creation error:', companyError)
       throw companyError
     }
 
@@ -87,6 +102,7 @@ export async function POST(req: NextRequest) {
       ])
 
     if (userError) {
+      console.error('User creation error:', userError)
       throw userError
     }
 

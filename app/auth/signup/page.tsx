@@ -72,23 +72,39 @@ export default function SignupPage() {
     setLoading(true)
 
     try {
-      const response = await fetch('/api/auth/signup', {
+      // Utiliser l'URL complète si on est en production
+      const apiUrl = process.env.NEXT_PUBLIC_APP_URL 
+        ? `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/signup`
+        : '/api/auth/signup'
+
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
       })
 
-      const data = await response.json()
-
       if (!response.ok) {
-        throw new Error(data.error || 'Erreur inscription')
+        let errorMessage = 'Erreur lors de l\'inscription'
+        
+        try {
+          const data = await response.json()
+          errorMessage = data.error || errorMessage
+        } catch (e) {
+          // Si le JSON parse échoue, utiliser le message par défaut
+          if (response.status === 500) {
+            errorMessage = 'Erreur serveur. Veuillez réessayer.'
+          }
+        }
+
+        setErrors({ submit: errorMessage })
+        return
       }
 
-      // Rediriger vers page de confirmation d'email
+      // Succès - rediriger vers page de confirmation d'email
       router.push('/auth/verify-email?email=' + encodeURIComponent(formData.email))
     } catch (error) {
       setErrors({
-        submit: error instanceof Error ? error.message : 'Erreur serveur',
+        submit: 'Erreur réseau. Vérifiez votre connexion.',
       })
     } finally {
       setLoading(false)
