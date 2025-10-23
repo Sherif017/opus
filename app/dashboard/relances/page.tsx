@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
-import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
+import { MessageSquare, ChevronDown, StickyNote } from 'lucide-react'
 
 interface Prospect {
   id: string
@@ -12,6 +12,7 @@ interface Prospect {
   dernier_contact?: string
   valeur_potentielle?: number
   statut_pipeline: string
+  notes?: string
 }
 
 interface HistoriqueRelance {
@@ -32,12 +33,31 @@ export default function RelancesPage() {
   const [historique, setHistorique] = useState<Record<string, HistoriqueRelance[]>>({})
   const [entrepriseName, setEntrepriseName] = useState('')
   const [companyId, setCompanyId] = useState<string>('')
+  const [expandedNotes, setExpandedNotes] = useState<string | null>(null)
+  const [editingNotesId, setEditingNotesId] = useState<string | null>(null)
+  const [formData, setFormData] = useState({
+    notes: '',
+  })
 
-  useEffect(() => {
-    init()
+  const loadHistorique = useCallback(async (prospectId: string, companyId: string) => {
+    try {
+      const { data } = await supabase
+        .from('relances_historique')
+        .select('*')
+        .eq('prospect_id', prospectId)
+        .eq('entreprise_id', companyId)
+        .order('date_envoi', { ascending: false })
+
+      setHistorique(prev => ({
+        ...prev,
+        [prospectId]: data || [],
+      }))
+    } catch (error) {
+      console.error('Error loading historique:', error)
+    }
   }, [])
 
-  const init = async () => {
+  const init = useCallback(async () => {
     try {
       const { data: user, error: userError } = await supabase
         .from('utilisateurs')
@@ -79,25 +99,11 @@ export default function RelancesPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [loadHistorique])
 
-  const loadHistorique = async (prospectId: string, companyId: string) => {
-    try {
-      const { data } = await supabase
-        .from('relances_historique')
-        .select('*')
-        .eq('prospect_id', prospectId)
-        .eq('entreprise_id', companyId)
-        .order('date_envoi', { ascending: false })
-
-      setHistorique(prev => ({
-        ...prev,
-        [prospectId]: data || [],
-      }))
-    } catch (error) {
-      console.error('Error loading historique:', error)
-    }
-  }
+  useEffect(() => {
+    init()
+  }, [init])
 
   const generateRelance = async (prospect: Prospect) => {
     setGeneratingId(prospect.id)
@@ -185,121 +191,252 @@ export default function RelancesPage() {
     }
   }
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text)
-    alert('Copié!')
+  const handleSaveNotes = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    try {
+      const { error } = await supabase
+        .from('prospects')
+        .update({
+          notes: formData.notes || null,
+        })
+        .eq('id', editingNotesId)
+
+      if (error) throw error
+
+      setProspects(prospects.map(p => p.id === editingNotesId ? {
+        ...p,
+        notes: formData.notes || undefined,
+      } : p))
+
+      setEditingNotesId(null)
+      setFormData({ notes: '' })
+    } catch (error) {
+      console.error('Error:', error)
+      alert('Erreur: ' + (error instanceof Error ? error.message : 'Unknown'))
+    }
   }
 
-  if (loading) return <p className="p-6">Chargement...</p>
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text)
+    alert('Texte copié !')
+  }
+
+  if (loading) return (
+    <div className="flex items-center justify-center h-96">
+      <div className="text-center">
+        <div className="w-12 h-12 rounded-full bg-blue-100 mx-auto mb-4 flex items-center justify-center">
+          <MessageSquare className="w-6 h-6 text-blue-600" />
+        </div>
+        <p className="text-gray-700 font-semibold">Chargement des relances...</p>
+      </div>
+    </div>
+  )
 
   return (
-    <div className="max-w-4xl mx-auto p-6">
-      <h1 className="text-3xl font-bold mb-6">Relances Automatiques (IA)</h1>
+    <div className="space-y-8 pb-8">
+      {/* Header */}
+      <div>
+        <h1 className="text-5xl font-bold bg-gradient-to-r from-blue-600 to-blue-700 bg-clip-text text-transparent mb-2">Relances</h1>
+        <p className="text-lg text-gray-600">{prospects.length} prospect{prospects.length > 1 ? 's' : ''} à relancer</p>
+      </div>
 
+      {/* Formulaire modification notes */}
+      {editingNotesId && (
+        <Card className="bg-gradient-to-br from-white to-gray-50 border border-gray-200 rounded-3xl p-8 shadow-lg">
+          <h2 className="text-3xl font-bold text-gray-900 mb-1">
+            Modifier les notes
+          </h2>
+          <p className="text-gray-600 text-sm mb-8">Prospect sélectionné</p>
+          
+          <form onSubmit={handleSaveNotes} className="space-y-6">
+            {/* Notes */}
+            <div className="bg-white rounded-xl p-4 border border-gray-200">
+              <label className="block text-sm font-bold text-gray-700 mb-2">📝 Notes</label>
+              <textarea
+                value={formData.notes}
+                maxLength={500}
+                onChange={(e) => setFormData({...formData, notes: e.target.value})}
+                placeholder="Ajoutez des notes sur ce prospect..."
+                className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 resize-vertical min-h-[120px] font-medium"
+              />
+              <p className="text-xs text-gray-500 mt-2">{formData.notes.length}/500 caractères</p>
+            </div>
+
+            {/* Boutons */}
+            <div className="flex gap-3 pt-6">
+              <button
+                type="submit"
+                className="flex-1 px-6 py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white rounded-xl font-bold transition-all shadow-lg hover:shadow-xl"
+              >
+                Enregistrer
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingNotesId(null)
+                  setFormData({ notes: '' })
+                }}
+                className="flex-1 px-6 py-3 bg-gray-200 hover:bg-gray-300 text-gray-900 rounded-xl font-bold transition-colors"
+              >
+                Annuler
+              </button>
+            </div>
+          </form>
+        </Card>
+      )}
+
+      {/* Liste des prospects */}
       {prospects.length === 0 ? (
-        <Card>
-          <p className="text-gray-600">Aucun prospect à relancer pour le moment.</p>
+        <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-200 rounded-3xl p-16 text-center shadow-lg">
+          <div className="w-20 h-20 bg-blue-200 rounded-full flex items-center justify-center mx-auto mb-6">
+            <MessageSquare className="w-10 h-10 text-blue-600" />
+          </div>
+          <p className="text-gray-800 text-xl font-bold mb-2">Aucun prospect à relancer</p>
+          <p className="text-gray-700">Tous vos prospects ont été contactés ou sont en phase avancée du pipeline</p>
         </Card>
       ) : (
         <div className="space-y-4">
-          <p className="text-gray-600">
-            {prospects.length} prospect(s) à relancer
-          </p>
-
-          {prospects.map(prospect => {
+          {prospects.map((prospect, index) => {
             const numRelances = historique[prospect.id]?.length || 0
+            const isNotesOpen = expandedNotes === prospect.id
+            const hasRelance = relances[prospect.id]
 
             return (
-              <Card key={prospect.id}>
-                <div className="mb-4">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <h3 className="font-bold text-lg">{prospect.nom}</h3>
-                      <p className="text-gray-600">{prospect.email}</p>
-                      {prospect.valeur_potentielle && (
-                        <p className="text-green-600">{prospect.valeur_potentielle}€</p>
-                      )}
+              <Card key={prospect.id} className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition-all">
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-6">
+                  {/* Infos principales */}
+                  <div className="flex-1">
+                    <div className="flex items-baseline gap-3 mb-4">
+                      <h3 className="text-2xl font-bold text-gray-900">Prospect {index + 1}</h3>
+                      <p className="text-lg text-gray-700 font-semibold">{prospect.nom}</p>
                     </div>
-                    <div className="text-right">
-                      <p className="text-sm text-gray-500">{numRelances} relance(s)</p>
+
+                    <div className="space-y-2 text-sm">
+                      <p className="text-gray-600">
+                        <span className="font-semibold">Email :</span> {prospect.email || 'Non renseigné'}
+                      </p>
+                      
+                      {prospect.valeur_potentielle && (
+                        <p className="text-gray-600">
+                          <span className="font-semibold">Valeur :</span> <span className="font-bold text-emerald-600">{prospect.valeur_potentielle}€</span>
+                        </p>
+                      )}
+
+                      <p className="text-gray-600">
+                        <span className="font-semibold">Relances envoyées :</span> <span className="font-bold">{numRelances}</span>
+                      </p>
+
+                      {prospect.notes && (
+                        <button
+                          onClick={() => setExpandedNotes(isNotesOpen ? null : prospect.id)}
+                          className="flex items-center gap-2 text-amber-700 text-sm font-semibold hover:text-amber-800 transition-colors mt-2"
+                        >
+                          <StickyNote className="w-4 h-4 flex-shrink-0" />
+                          <span>Notes ({prospect.notes.length} caractères)</span>
+                          <ChevronDown className={`w-4 h-4 transition-transform ${isNotesOpen ? 'rotate-180' : ''}`} />
+                        </button>
+                      )}
+
+                      {isNotesOpen && prospect.notes && (
+                        <div className="mt-3 p-3 bg-amber-50 rounded border-l-4 border-amber-400">
+                          <p className="text-gray-800 text-sm whitespace-pre-wrap">{prospect.notes}</p>
+                        </div>
+                      )}
+
                       {numRelances > 0 && (
                         <button
                           onClick={() => setHistoriqueOpen(historiqueOpen === prospect.id ? null : prospect.id)}
-                          className="text-blue-600 text-sm underline"
+                          className="text-blue-600 text-sm font-semibold hover:text-blue-700 transition-colors"
                         >
-                          {historiqueOpen === prospect.id ? 'Masquer' : 'Voir historique'}
+                          {historiqueOpen === prospect.id ? 'Masquer historique' : 'Voir historique'}
                         </button>
                       )}
                     </div>
+
+                    {/* Historique des relances */}
+                    {historiqueOpen === prospect.id && historique[prospect.id]?.length > 0 && (
+                      <div className="mt-4 p-4 bg-gray-50 rounded border-l-4 border-gray-300 space-y-3 max-h-48 overflow-y-auto">
+                        {historique[prospect.id].map((relance) => (
+                          <div key={relance.id} className="border-l-2 border-gray-300 pl-3">
+                            <p className="text-sm font-semibold text-gray-700">
+                              Relance #{relance.numero_relance} - {new Date(relance.date_envoi).toLocaleDateString('fr-FR')}
+                            </p>
+                            <p className="text-sm text-gray-600 mt-1">{relance.texte_relance}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex flex-wrap gap-2 w-full sm:w-auto sm:flex-col-reverse">
+                    <button
+                      onClick={() => {
+                        setFormData({ notes: prospect.notes || '' })
+                        setEditingNotesId(prospect.id)
+                      }}
+                      className="px-3 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded font-semibold text-sm transition-colors"
+                    >
+                      Modifier
+                    </button>
+
+                    {hasRelance ? (
+                      <>
+                        <button
+                          onClick={() => copyToClipboard(relances[prospect.id])}
+                          className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded font-semibold text-sm transition-colors"
+                        >
+                          Copier
+                        </button>
+                        <button
+                          onClick={() => sendEmailRelance(prospect, relances[prospect.id])}
+                          disabled={sendingId === prospect.id}
+                          className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded font-semibold text-sm transition-colors disabled:opacity-50"
+                        >
+                          {sendingId === prospect.id ? 'Envoi...' : 'Envoyer'}
+                        </button>
+                        <button
+                          onClick={() => setRelances(prev => {
+                            const newRelances = { ...prev }
+                            delete newRelances[prospect.id]
+                            return newRelances
+                          })}
+                          className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded font-semibold text-sm transition-colors"
+                        >
+                          Annuler
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => generateRelance(prospect)}
+                        disabled={generatingId === prospect.id}
+                        className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded font-semibold text-sm transition-colors disabled:opacity-50"
+                      >
+                        {generatingId === prospect.id ? 'Génération...' : 'Générer'}
+                      </button>
+                    )}
                   </div>
                 </div>
 
-                {historiqueOpen === prospect.id && historique[prospect.id] && (
-                  <div className="bg-gray-50 p-3 rounded mb-4 border-l-4 border-gray-300">
-                    <h4 className="font-bold text-sm mb-3">Historique des relances:</h4>
-                    <div className="space-y-3 max-h-48 overflow-y-auto">
-                      {historique[prospect.id].map((relance) => (
-                        <div key={relance.id} className="border-l-2 border-gray-300 pl-3 pb-2">
-                          <p className="text-sm font-semibold text-gray-700">
-                            Relance #{relance.numero_relance} - {new Date(relance.date_envoi).toLocaleDateString('fr-FR')}
-                          </p>
-                          <p className="text-sm text-gray-600 mt-1">{relance.texte_relance}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {relances[prospect.id] ? (
-                  <div>
-                    <div className="bg-yellow-50 p-4 rounded mb-3 border-l-4 border-yellow-500">
-                      <p className="text-sm font-semibold text-yellow-900 mb-2">Aperçu du mail:</p>
+                {/* Aperçu du mail généré */}
+                {hasRelance && (
+                  <div className="mt-4 pt-4 border-t border-gray-200">
+                    <div className="bg-amber-50 p-4 rounded border-l-4 border-amber-400">
+                      <p className="text-sm font-bold text-amber-900 mb-3">Aperçu du mail :</p>
                       <div className="text-sm text-gray-800 space-y-2">
-                        <p><strong>Envoyé à:</strong> {prospect.email}</p>
-                        <p><strong>Objet:</strong> Suivi - {entrepriseName}</p>
-                        <div className="bg-white p-2 rounded border border-yellow-200 mt-2">
+                        <p><span className="font-semibold">À :</span> {prospect.email}</p>
+                        <p><span className="font-semibold">Objet :</span> Suivi - {entrepriseName}</p>
+                        <div className="bg-white p-3 rounded border border-amber-200 mt-2">
                           <p className="text-xs text-gray-500 mb-2">--- CORPS DU MAIL ---</p>
                           <p>Bonjour {prospect.nom},</p>
                           <p className="my-2">{relances[prospect.id]}</p>
                           <p>N&apos;hésitez pas à nous contacter si vous avez des questions.</p>
-                          <p className="mt-2">Cordialement,<br/><strong>{entrepriseName}</strong></p>
+                          <p className="mt-2">Cordialement,<br/><span className="font-semibold">{entrepriseName}</span></p>
                         </div>
                       </div>
                     </div>
-                    <div className="flex gap-2 flex-wrap">
-                      <Button
-                        onClick={() => copyToClipboard(relances[prospect.id])}
-                        variant="primary"
-                      >
-                        Copier Message
-                      </Button>
-                      <Button
-                        onClick={() => sendEmailRelance(prospect, relances[prospect.id])}
-                        disabled={sendingId === prospect.id}
-                        variant="primary"
-                      >
-                        {sendingId === prospect.id ? 'Envoi...' : 'Envoyer Email'}
-                      </Button>
-                      <Button
-                        onClick={() => setRelances(prev => {
-                          const newRelances = { ...prev }
-                          delete newRelances[prospect.id]
-                          return newRelances
-                        })}
-                        variant="secondary"
-                      >
-                        Annuler
-                      </Button>
-                    </div>
                   </div>
-                ) : (
-                  <Button
-                    onClick={() => generateRelance(prospect)}
-                    disabled={generatingId === prospect.id}
-                    variant="primary"
-                  >
-                    {generatingId === prospect.id ? 'Génération...' : 'Générer Relance (IA)'}
-                  </Button>
                 )}
               </Card>
             )
