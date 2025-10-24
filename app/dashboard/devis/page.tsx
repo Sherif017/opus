@@ -123,7 +123,7 @@ export default function DevisPage() {
     try {
       const lignes = await getLignesDevis(devisItem.id)
 
-      const response = await fetch('/api/send-devis-email', {
+      const response = await fetch('/api/emails/send-devis-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
