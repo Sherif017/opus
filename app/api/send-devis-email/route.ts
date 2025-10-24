@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
-
+export const runtime = 'nodejs'
 // Handle CORS preflight
 export async function OPTIONS() {
   return new NextResponse(null, {

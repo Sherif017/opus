@@ -64,8 +64,8 @@ export default function LandingPage() {
 
             {/* Titre principal */}
             <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold mb-6 leading-tight">
-              Travaillez <span className="bg-gradient-to-r from-blue-400 to-blue-600 bg-clip-text text-transparent">plus malin</span>, facturationez{' '}
-              <span className="bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">plus vite</span>
+              Travaillez <span className="bg-gradient-to-r from-blue-400 to-blue-600 bg-clip-text text-transparent">plus malin</span>, pilotez votre{' '}
+<span className="bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">business plus simplement</span>
             </h1>
 
             {/* Sous-titre */}
