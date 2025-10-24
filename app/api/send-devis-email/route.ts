@@ -6,9 +6,15 @@ export const runtime = 'nodejs'
 
 export async function POST(req: NextRequest) {
   try {
+    console.log('📧 Starting email send process...')
     const { devisData, lignes, clientEmail, clientName, entrepriseData } = await req.json()
 
+    console.log('✅ Parsed request body')
+    console.log('Client Email:', clientEmail)
+    console.log('Client Name:', clientName)
+
     if (!clientEmail || !devisData) {
+      console.log('❌ Missing data')
       return NextResponse.json(
         { error: 'Données manquantes' },
         { status: 400 }
@@ -16,16 +22,22 @@ export async function POST(req: NextRequest) {
     }
 
     if (!process.env.RESEND_API_KEY) {
+      console.log('❌ RESEND_API_KEY not configured')
       return NextResponse.json(
         { error: 'Clé API Resend non configurée' },
         { status: 500 }
       )
     }
 
+    console.log('✅ RESEND_API_KEY found')
+
     const resend = new Resend(process.env.RESEND_API_KEY)
 
     // Générer le PDF
-    const pdfResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/generate-devis-pdf`, {
+    const pdfUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/generate-devis-pdf`
+    console.log('🔗 PDF URL:', pdfUrl)
+
+    const pdfResponse = await fetch(pdfUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -36,13 +48,21 @@ export async function POST(req: NextRequest) {
       }),
     })
 
+    console.log('📄 PDF Response Status:', pdfResponse.status)
+    
     if (!pdfResponse.ok) {
-      throw new Error('Erreur génération PDF')
+      const errorText = await pdfResponse.text()
+      console.log('❌ PDF Error:', errorText)
+      throw new Error(`Erreur PDF: ${pdfResponse.status} - ${errorText}`)
     }
 
+    console.log('✅ PDF generated successfully')
     const pdfBuffer = await pdfResponse.arrayBuffer()
+    console.log('📦 PDF Buffer size:', pdfBuffer.byteLength)
 
     // Envoyer l'email avec le PDF
+    console.log('📬 Sending email to:', clientEmail)
+    
     const result = await resend.emails.send({
       from: 'noreply@opus.boutique',
       to: clientEmail,
@@ -103,15 +123,21 @@ export async function POST(req: NextRequest) {
       ],
     })
 
+    console.log('✅ Resend response:', result)
+
     if (result.error) {
+      console.log('❌ Resend error:', result.error)
       throw new Error(result.error.message)
     }
 
+    console.log('✅ Email sent successfully. Message ID:', result.data?.id)
     return NextResponse.json({ success: true, messageId: result.data?.id })
   } catch (error) {
-    console.error('Email Error:', error)
+    console.error('❌ Email Error:', error)
+    const errorMessage = error instanceof Error ? error.message : 'Erreur envoi email'
+    console.error('Error details:', errorMessage)
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Erreur envoi email' },
+      { error: errorMessage },
       { status: 500 }
     )
   }
