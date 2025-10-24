@@ -100,10 +100,8 @@ export default function NewDevisPage() {
     try {
       const { totalHT, totalTVA, totalTTC } = calculateTotal()
       
-      // Générer numéro devis
       const numero = `DEV-${new Date().getFullYear()}-${Math.floor(Math.random() * 10000)}`
 
-      // Créer devis avec les montants
       const { data: devisData, error: devisError } = await supabase
         .from('devis')
         .insert([{
@@ -120,7 +118,6 @@ export default function NewDevisPage() {
 
       if (devisError) throw devisError
 
-      // Créer lignes
       for (const ligne of lignes) {
         await supabase.from('devis_lignes').insert([{
           devis_id: devisData.id,
@@ -164,38 +161,55 @@ export default function NewDevisPage() {
       <Card className="mb-6">
         <h2 className="font-bold mb-4">Lignes Devis</h2>
 
-        <div className="space-y-3 mb-4">
+        <div className="space-y-4 mb-4">
           {lignes.map((ligne, index) => (
-            <div key={index} className="grid grid-cols-5 gap-2">
-              <Input
-                placeholder="Description"
-                value={ligne.description}
-                onChange={(e) => handleLigneChange(index, 'description', e.target.value)}
-              />
-              <Input
-                type="number"
-                placeholder="Quantité"
-                value={ligne.quantite}
-                onChange={(e) => handleLigneChange(index, 'quantite', e.target.value)}
-              />
-              <Input
-                type="number"
-                placeholder="Prix unitaire"
-                value={ligne.prix_unitaire}
-                onChange={(e) => handleLigneChange(index, 'prix_unitaire', e.target.value)}
-              />
-              <Input
-                type="number"
-                placeholder="TVA %"
-                value={ligne.taux_tva}
-                onChange={(e) => handleLigneChange(index, 'taux_tva', e.target.value)}
-              />
-              <Button
-                onClick={() => handleRemoveLigne(index)}
-                variant="danger"
-              >
-                Supprimer
-              </Button>
+            <div key={index} className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <div className="md:col-span-2">
+                  <label className="text-sm font-semibold text-gray-700 block mb-1">Description</label>
+                  <Input
+                    placeholder="Service/Produit"
+                    value={ligne.description}
+                    onChange={(e) => handleLigneChange(index, 'description', e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-gray-700 block mb-1">Quantité</label>
+                  <Input
+                    type="number"
+                    placeholder="1"
+                    value={ligne.quantite}
+                    onChange={(e) => handleLigneChange(index, 'quantite', e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-gray-700 block mb-1">Prix unitaire</label>
+                  <Input
+                    type="number"
+                    placeholder="0.00"
+                    value={ligne.prix_unitaire}
+                    onChange={(e) => handleLigneChange(index, 'prix_unitaire', e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-gray-700 block mb-1">TVA %</label>
+                  <Input
+                    type="number"
+                    placeholder="20"
+                    value={ligne.taux_tva}
+                    onChange={(e) => handleLigneChange(index, 'taux_tva', e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="mt-3">
+                <Button
+                  onClick={() => handleRemoveLigne(index)}
+                  variant="danger"
+                  className="w-full"
+                >
+                  Supprimer
+                </Button>
+              </div>
             </div>
           ))}
         </div>

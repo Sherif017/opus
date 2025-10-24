@@ -2,6 +2,18 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 
+// Handle CORS preflight
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    },
+  })
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { devisData, lignes, clientEmail, clientName, entrepriseData } = await req.json()
@@ -9,14 +21,22 @@ export async function POST(req: NextRequest) {
     if (!clientEmail || !devisData) {
       return NextResponse.json(
         { error: 'Données manquantes' },
-        { status: 400 }
+        { status: 400,
+          headers: {
+            'Access-Control-Allow-Origin': '*',
+          }
+        }
       )
     }
 
     if (!process.env.RESEND_API_KEY) {
       return NextResponse.json(
         { error: 'Clé API Resend non configurée' },
-        { status: 500 }
+        { status: 500,
+          headers: {
+            'Access-Control-Allow-Origin': '*',
+          }
+        }
       )
     }
 
@@ -105,12 +125,27 @@ export async function POST(req: NextRequest) {
       throw new Error(result.error.message)
     }
 
-    return NextResponse.json({ success: true, messageId: result.data?.id })
+    return NextResponse.json(
+      { success: true, messageId: result.data?.id },
+      { 
+        status: 200,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type',
+        }
+      }
+    )
   } catch (error) {
     console.error('Email Error:', error)
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Erreur envoi email' },
-      { status: 500 }
+      { 
+        status: 500,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+        }
+      }
     )
   }
 }
