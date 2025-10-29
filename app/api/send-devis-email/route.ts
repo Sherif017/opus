@@ -13,6 +13,9 @@ interface LigneDevis {
 }
 
 export async function POST(req: NextRequest) {
+    // ✅ Créer les clients DANS la fonction
+    const resend = new Resend(process.env.RESEND_API_KEY)
+
   try {
     const { devisData, lignes, clientEmail, clientName, entrepriseData } = await req.json()
 
@@ -126,9 +129,7 @@ export async function POST(req: NextRequest) {
     const pdfBuffer = pdf.output('arraybuffer')
 
     // Envoyer email avec PDF
-    const resend = new Resend(process.env.RESEND_API_KEY)
-
-    const result = await resend.emails.send({
+        const result = await resend.emails.send({
       from: 'noreply@opus.boutique',
       to: clientEmail,
       subject: `Devis ${devisData.numero_devis}`,

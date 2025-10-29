@@ -2,19 +2,19 @@ import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(req: NextRequest) {
-  try {
-    // ✅ Créer les clients DANS la fonction (pas au niveau du module)
+    // ✅ Créer les clients DANS la fonction
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
     const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
 
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    )
-
-    const { email, password, nomEntreprise, nomArtisan, prenomArtisan } =
+  try {
+    // ✅ Créer les clients DANS la fonction (pas au niveau du module)
+            const { email, password, nomEntreprise, nomArtisan, prenomArtisan } =
       await req.json()
 
     // Validation basique

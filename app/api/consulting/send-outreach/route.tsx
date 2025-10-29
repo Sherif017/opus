@@ -1,14 +1,15 @@
 import { Resend } from 'resend'
 import { NextRequest, NextResponse } from 'next/server'
 
-const resend = new Resend(process.env.RESEND_API_KEY)
-
 interface Prospect {
   email: string
   name?: string
 }
 
 export async function POST(request: NextRequest) {
+    // ✅ Créer les clients DANS la fonction
+    const resend = new Resend(process.env.RESEND_API_KEY)
+
   try {
     const { emails } = await request.json()
 

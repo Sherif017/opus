@@ -3,6 +3,9 @@ import { NextRequest, NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
+    // ✅ Créer les clients DANS la fonction
+    const resend = new Resend(process.env.RESEND_API_KEY)
+
   try {
     const { factureData, lignes, clientEmail, clientName, entrepriseData } = await req.json()
 
@@ -22,9 +25,7 @@ export async function POST(req: NextRequest) {
 
     // Importer Resend dynamiquement dans la fonction
     const { Resend } = await import('resend')
-    const resend = new Resend(process.env.RESEND_API_KEY)
-
-    // Générer le PDF
+        // Générer le PDF
     const pdfResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/generate-invoice-pdf`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

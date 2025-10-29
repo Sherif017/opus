@@ -4,9 +4,10 @@ import { Resend } from 'resend'
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
-const resend = new Resend(process.env.RESEND_API_KEY)
-
 export async function POST(req: NextRequest) {
+    // ✅ Créer les clients DANS la fonction
+    const resend = new Resend(process.env.RESEND_API_KEY)
+
   try {
     const { email, name } = await req.json()
 

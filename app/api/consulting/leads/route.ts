@@ -3,11 +3,6 @@ import { createClient } from '@supabase/supabase-js'
 import { getEntrepriseIdFromRequest } from '@/lib/auth'
 
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
-
 export const dynamic = 'force-dynamic'
 
 /**
@@ -15,6 +10,12 @@ export const dynamic = 'force-dynamic'
  * Récupère UNIQUEMENT les leads de l'entreprise connectée
  */
 export async function GET(req: NextRequest) {
+    // ✅ Créer les clients DANS la fonction
+    const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+)
+
   try {
     // ✅ Récupérer l'entreprise_id de manière sécurisée
     const entrepriseId = await getEntrepriseIdFromRequest(req)
@@ -43,6 +44,12 @@ export async function GET(req: NextRequest) {
  * Créer un nouveau lead pour l'entreprise connectée
  */
 export async function POST(req: NextRequest) {
+    // ✅ Créer les clients DANS la fonction
+    const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+)
+
   try {
     // ✅ Récupérer l'entreprise_id
     const entrepriseId = await getEntrepriseIdFromRequest(req)
