@@ -1,7 +1,8 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { supabase } from '@/lib/supabase'
+import { supabase } from '@/lib/supabase-client';
+
 import { Bell, LogOut, User as UserIcon, ChevronDown } from 'lucide-react'
 
 interface UserData {
@@ -49,9 +50,16 @@ export function Header() {
   }
 
   const handleLogout = async () => {
-    await supabase.auth.signOut()
-    document.cookie = 'auth_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;'
-    router.push('/')
+    try {
+      console.log('🔓 Déconnexion...')
+      await supabase.auth.signOut()
+      document.cookie = 'auth_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:01 GMT;'
+      console.log('✅ Déconnecté, redirection vers login...')
+      router.push('/auth/login')
+    } catch (error) {
+      console.error('❌ Error logging out:', error)
+      router.push('/auth/login')
+    }
   }
 
   return (

@@ -1,5 +1,17 @@
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
+
+// ✅ Client admin (avec service role key)
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+)
+
+// Client auth normal (pour signUp)
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)
 
 export async function POST(req: NextRequest) {
   try {
@@ -31,8 +43,8 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // ✅ VÉRIFIER SI L'EMAIL EXISTE DÉJÀ dans la table utilisateurs
-    const { data: existingUser, error: checkError } = await supabase
+    // ✅ VÉRIFIER SI L'EMAIL EXISTE DÉJÀ - utiliser supabaseAdmin
+    const { data: existingUser, error: checkError } = await supabaseAdmin
       .from('utilisateurs')
       .select('email')
       .eq('email', email)
@@ -70,8 +82,8 @@ export async function POST(req: NextRequest) {
       throw new Error('Erreur lors de la création de l\'utilisateur')
     }
 
-    // 2. Créer l'entreprise
-    const { data: company, error: companyError } = await supabase
+    // 2. Créer l'entreprise - utiliser supabaseAdmin
+    const { data: company, error: companyError } = await supabaseAdmin
       .from('entreprises')
       .insert([
         {
@@ -87,8 +99,8 @@ export async function POST(req: NextRequest) {
       throw companyError
     }
 
-    // 3. Ajouter l'utilisateur dans la table utilisateurs
-    const { error: userError } = await supabase
+    // 3. Ajouter l'utilisateur dans la table utilisateurs - utiliser supabaseAdmin
+    const { error: userError } = await supabaseAdmin
       .from('utilisateurs')
       .insert([
         {

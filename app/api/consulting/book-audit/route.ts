@@ -1,191 +1,170 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@supabase/supabase-js'
 import { Resend } from 'resend'
+import { NextRequest, NextResponse } from 'next/server'
 
-export const dynamic = 'force-dynamic'
-export const runtime = 'nodejs'
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+)
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
-export async function POST(req: NextRequest) {
+export async function POST(request: NextRequest) {
   try {
-    const { 
-      name, 
-      email, 
-      company, 
-      phone, 
-      sector, 
-      scheduled_date, 
-      duration_minutes 
-    } = await req.json()
+    const body = await request.json()
 
-    if (!name || !email || !scheduled_date) {
+    const {
+      fullName,
+      email,
+      phone,
+      company,
+      industry,
+      challenge,
+      preferredDate,
+      preferredTime,
+    } = body
+
+    console.log('📝 Données reçues:', { fullName, email, phone, company, industry })
+
+    // Validation
+    if (!fullName || !email || !phone || !company || !industry || !challenge || !preferredDate || !preferredTime) {
       return NextResponse.json(
-        { error: 'Données manquantes' },
+        { error: 'Tous les champs sont requis' },
         { status: 400 }
       )
     }
 
-    // 1. Créer/Update lead
-    const { data: existingLead, error: checkError } = await supabase
+    // Sépare nom et prénom
+    const nameParts = fullName.trim().split(' ')
+    const prenom = nameParts[0]
+    const nom = nameParts.slice(1).join(' ') || prenom
+
+    console.log('👤 Nom séparé:', { nom, prenom })
+
+    // Crée un lead dans consulting_leads (la table correcte!)
+    console.log('➕ Créant lead dans consulting_leads...')
+    const { data: newLead, error: leadError } = await supabase
       .from('consulting_leads')
-      .select('id')
-      .eq('email', email)
-      .single()
+      .insert([
+        {
+          name: fullName,
+          email: email,
+          phone: phone,
+          company: company,
+          status: 'pending',
+          notes: `Secteur: ${industry}\n\nDéfi: ${challenge}`,
+        },
+      ])
+      .select()
 
-    let leadId
-
-    if (!existingLead) {
-      // Créer nouveau lead
-      const { data: newLead, error: createError } = await supabase
-        .from('consulting_leads')
-        .insert([{
-          email,
-          name,
-          company: company || null,
-          phone: phone || null,
-          sector: sector || null,
-          source: 'website-booking',
-          status: 'qualified',
-          created_at: new Date(),
-        }])
-        .select('id')
-        .single()
-
-      if (createError) throw createError
-      leadId = newLead.id
-    } else {
-      leadId = existingLead.id
+    if (leadError) {
+      console.error('❌ Lead creation error:', leadError)
+      return NextResponse.json(
+        { error: 'Erreur lors de la création du lead' },
+        { status: 500 }
+      )
     }
 
-    // 2. Créer audit
-    const { data: audit, error: auditError } = await supabase
+    const leadId = newLead?.[0]?.id
+    console.log('✅ Lead créé:', leadId)
+
+    if (!leadId) {
+      return NextResponse.json(
+        { error: 'Impossible de créer le lead' },
+        { status: 500 }
+      )
+    }
+
+    // Combine date et heure en timestamp
+    const scheduledDateTime = `${preferredDate}T${preferredTime}:00`
+    console.log('📅 Date/Heure:', scheduledDateTime)
+
+    // Insère dans consulting_audits avec le leadId
+    const { data, error: dbError } = await supabase
       .from('consulting_audits')
-      .insert([{
-        lead_id: leadId,
-        scheduled_date,
-        duration_minutes: duration_minutes || 30,
-        status: 'scheduled',
-        created_at: new Date(),
-      }])
+      .insert([
+        {
+          lead_id: leadId,
+          scheduled_date: scheduledDateTime,
+          duration_minutes: 30,
+          notes: `Entreprise: ${company}\nSecteur: ${industry}\n\nDéfi:\n${challenge}`,
+          status: 'pending',
+        },
+      ])
       .select()
-      .single()
 
-    if (auditError) throw auditError
+    if (dbError) {
+      console.error('❌ Audit creation error:', dbError)
+      return NextResponse.json(
+        { error: 'Erreur lors de la création de l\'audit' },
+        { status: 500 }
+      )
+    }
 
-    // 3. Envoyer email de confirmation
-    const auditDate = new Date(scheduled_date)
-    const formattedDate = auditDate.toLocaleDateString('fr-FR', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
+    console.log('✅ Audit créé:', data?.[0]?.id)
 
-    const zoomLink = `https://zoom.us/meeting/schedule` // À remplacer par vrai lien Zoom généré
+    // Envoyer email de confirmation au client
+    try {
+      await resend.emails.send({
+        from: 'consulting@opus.boutique',
+        to: email,
+        subject: 'Confirmation de votre audit gratuit OPUS',
+        html: `
+          <h2>Bonjour ${prenom},</h2>
+          <p>Merci de votre intérêt pour un audit gratuit OPUS!</p>
+          
+          <h3>Récapitulatif de votre réservation:</h3>
+          <ul>
+            <li><strong>Date:</strong> ${preferredDate}</li>
+            <li><strong>Heure:</strong> ${preferredTime}</li>
+            <li><strong>Entreprise:</strong> ${company}</li>
+            <li><strong>Secteur:</strong> ${industry}</li>
+          </ul>
+          
+          <p>Nous vous contacterons sous 24h pour confirmer votre rendez-vous au numéro: <strong>${phone}</strong></p>
+          
+          <p>À bientôt,<br/>L'équipe OPUS</p>
+        `,
+      })
+      console.log('✅ Email confirmation envoyé')
+    } catch (emailError) {
+      console.error('⚠️ Email error:', emailError)
+    }
 
-    await resend.emails.send({
-      from: 'consulting@opus.boutique',
-      to: email,
-      subject: '✅ Votre audit gratuit est confirmé!',
-      html: `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <style>
-            body { font-family: Arial, sans-serif; color: #333; background-color: #f5f5f5; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; background-color: white; border-radius: 8px; }
-            .header { background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; padding: 20px; border-radius: 8px 8px 0 0; text-align: center; }
-            .content { padding: 30px; }
-            .info-box { background-color: #f0f9ff; border-left: 4px solid #2563eb; padding: 15px; margin: 20px 0; border-radius: 4px; }
-            .button { display: inline-block; background-color: #2563eb; color: white; padding: 12px 24px; border-radius: 4px; text-decoration: none; margin-top: 10px; }
-            .footer { background-color: #f5f5f5; padding: 20px; text-align: center; font-size: 12px; color: #999; border-radius: 0 0 8px 8px; }
-            strong { color: #1d4ed8; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <div class="header">
-              <h1>✅ Audit Confirmé!</h1>
-            </div>
-
-            <div class="content">
-              <p>Bonjour <strong>${name}</strong>,</p>
-
-              <p>Merci! Votre audit gratuit est maintenant confirmé.</p>
-
-              <div class="info-box">
-                <p><strong>📅 Date & Heure:</strong></p>
-                <p style="font-size: 18px; margin: 10px 0;">${formattedDate}</p>
-
-                <p style="margin-top: 20px;"><strong>🎯 Durée:</strong> 30 minutes</p>
-
-                <p style="margin-top: 20px;"><strong>📍 Format:</strong> Visioconférence Zoom</p>
-              </div>
-
-              <h3>Avant votre audit, préparez:</h3>
-              <ul>
-                <li>Une description de vos tâches administratives les plus chronophages</li>
-                <li>Vos outils actuels (CRM, Excel, etc.)</li>
-                <li>Votre budget approximatif (optional)</li>
-              </ul>
-
-              <p>
-                <strong>Lien Zoom sera envoyé 24h avant votre audit.</strong>
-              </p>
-
-              <p>
-                Vous avez des questions? Répondez directement à cet email.
-              </p>
-
-              <p style="margin-top: 30px;">
-                À bientôt,<br>
-                <strong>L'équipe Opus</strong>
-              </p>
-            </div>
-
-            <div class="footer">
-              <p>© 2025 Opus Automation. Tous droits réservés.</p>
-              <p>Vous recevrez un rappel 24h avant votre audit.</p>
-            </div>
-          </div>
-        </body>
-        </html>
-      `,
-    })
-
-    // 4. Envoyer email à l'admin (you)
-    await resend.emails.send({
-      from: 'consulting@opus.boutique',
-      to: 'YOUR_EMAIL@opus.boutique',
-      subject: `📅 Nouvel audit réservé: ${name}`,
-      html: `
-        <html>
-        <body style="font-family: Arial;">
+    // Envoyer email de notification à l'admin
+    try {
+      await resend.emails.send({
+        from: 'consulting@opus.boutique',
+        to: 'admin@opus.boutique',
+        subject: `Nouvel audit réservé - ${fullName}`,
+        html: `
           <h2>Nouvel audit réservé!</h2>
-          
-          <p><strong>Client:</strong> ${name}</p>
+          <p><strong>Nom:</strong> ${fullName}</p>
           <p><strong>Email:</strong> ${email}</p>
-          <p><strong>Secteur:</strong> ${sector}</p>
-          <p><strong>Date & Heure:</strong> ${formattedDate}</p>
-          
-          <p><a href="https://opus.boutique/dashboard/consulting">Voir dans le dashboard →</a></p>
-        </body>
-        </html>
-      `,
-    })
+          <p><strong>Téléphone:</strong> ${phone}</p>
+          <p><strong>Entreprise:</strong> ${company}</p>
+          <p><strong>Secteur:</strong> ${industry}</p>
+          <p><strong>Date:</strong> ${preferredDate}</p>
+          <p><strong>Heure:</strong> ${preferredTime}</p>
+          <p><strong>Défi:</strong></p>
+          <p>${challenge}</p>
+        `,
+      })
+      console.log('✅ Email admin envoyé')
+    } catch (emailError) {
+      console.error('⚠️ Admin email error:', emailError)
+    }
 
-    return NextResponse.json({ 
-      success: true, 
-      data: audit 
+    return NextResponse.json({
+      success: true,
+      message: 'Audit réservé avec succès!',
+      data: data?.[0] || {},
     })
   } catch (error) {
-    console.error('Error:', error)
+    console.error('❌ Booking error:', error)
+    const errorMessage = error instanceof Error ? error.message : 'Erreur lors de la réservation'
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Erreur lors de la réservation' },
+      { error: errorMessage },
       { status: 500 }
     )
   }

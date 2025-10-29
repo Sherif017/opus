@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase'
+import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(req: NextRequest) {
@@ -22,6 +22,11 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
+    
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -35,34 +40,18 @@ export async function POST(req: NextRequest) {
       throw new Error('Erreur lors de la création de la session')
     }
 
-    // Créer réponse avec cookie session
+    // Retourne la session au client
     const response = NextResponse.json(
       {
         success: true,
         user: data.user,
+        session: {
+          access_token: data.session.access_token,
+          refresh_token: data.session.refresh_token,
+        },
       },
       { status: 200 }
     )
-
-    // Sauvegarder token dans cookie
-    response.cookies.set('auth_token', data.session.access_token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 60 * 60 * 24 * 30, // 30 jours
-      path: '/',
-    })
-
-    // Sauvegarder refresh token
-    if (data.session.refresh_token) {
-      response.cookies.set('refresh_token', data.session.refresh_token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: 60 * 60 * 24 * 30,
-        path: '/',
-      })
-    }
 
     return response
   } catch (error) {

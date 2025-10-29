@@ -4,6 +4,12 @@ import { useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Mail, Lock, Eye, EyeOff } from 'lucide-react'
 import Link from 'next/link'
+import { createClient } from '@supabase/supabase-js'
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+)
 
 function LoginContent() {
   const router = useRouter()
@@ -70,6 +76,23 @@ function LoginContent() {
         throw new Error(data.error || 'Erreur connexion')
       }
 
+      console.log('✅ Connexion réussie, token:', data.session?.access_token)
+
+      // Stocke la session dans Supabase côté client
+      if (data.session?.access_token) {
+        const { error } = await supabase.auth.setSession({
+          access_token: data.session.access_token,
+          refresh_token: data.session.refresh_token || '',
+        })
+
+        if (error) {
+          console.error('❌ Erreur set session:', error)
+          throw error
+        }
+
+        console.log('✅ Session stockée dans Supabase')
+      }
+
       // Sauvegarder "Se souvenir de moi"
       if (rememberMe) {
         localStorage.setItem('rememberEmail', formData.email)
@@ -79,6 +102,7 @@ function LoginContent() {
 
       router.push('/dashboard')
     } catch (error) {
+      console.error('❌ Erreur login:', error)
       setErrors({
         submit: error instanceof Error ? error.message : 'Erreur serveur',
       })

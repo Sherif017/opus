@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
-
+import { supabase } from '@/lib/supabase-client'
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { supabase } from '@/lib/supabase'
+import { supabase } from '@/lib/supabase-client'
 import { Card } from '@/components/ui/Card'
 import { Plus, Trash2, Mail, Phone, TrendingUp, StickyNote, Edit3, ChevronDown } from 'lucide-react'
 
