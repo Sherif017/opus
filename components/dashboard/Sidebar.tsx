@@ -20,10 +20,12 @@ const navItems = [
   { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { href: '/dashboard/clients', label: 'Clients', icon: Users },
   { href: '/dashboard/prospects', label: 'Prospects', icon: TrendingUp },
+  { href: '/dashboard/pipeline', label: 'Pipeline', icon: TrendingUp },
   { href: '/dashboard/devis', label: 'Devis', icon: FileText },
   { href: '/dashboard/factures', label: 'Factures', icon: DollarSign },
   { href: '/dashboard/rendez-vous', label: 'Rendez-vous', icon: Calendar },
   { href: '/dashboard/relances', label: 'Relances IA', icon: Zap },
+  { href: '/dashboard/audits', label: 'Audits', icon: Calendar },
 ]
 
 export function Sidebar() {

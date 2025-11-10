@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const { prospectEmail, prospectName, relanceText, companyName } = await req.json()
+    const { prospectEmail, prospectName, relanceText, companyName, sujet } = await req.json()
 
     if (!prospectEmail) {
       return NextResponse.json({ error: 'Email du prospect requis' }, { status: 400 })
@@ -25,21 +25,59 @@ export async function POST(req: NextRequest) {
     const result = await resend.emails.send({
       from: process.env.SENDER_EMAIL || 'noreply@opus.boutique',
       to: prospectEmail,
-      subject: `Suivi - ${companyName}`,
+      subject: sujet || `Suivi - ${companyName}`,
       html: `
-        <html>
-          <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-              <h2>Bonjour ${prospectName},</h2>
-             
-              <p>${relanceText.replace(/\n/g, '<br>')}</p>
-             
-              <p>N'hésitez pas à nous contacter si vous avez des questions.</p>
-             
-              <p>Cordialement,<br><strong>${companyName}</strong></p>
-             
-              <hr style="margin-top: 40px; border: none; border-top: 1px solid #ddd;">
-              <p style="font-size: 12px; color: #999;">Cet email a été généré automatiquement par OPUS</p>
+        <!DOCTYPE html>
+        <html lang="fr">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+              body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+                line-height: 1.6;
+                color: #333;
+                margin: 0;
+                padding: 0;
+              }
+              .container {
+                max-width: 600px;
+                margin: 0 auto;
+                padding: 20px;
+                background-color: #f9fafb;
+              }
+              .content {
+                background-color: white;
+                padding: 30px;
+                border-radius: 8px;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+              }
+              .message {
+                font-size: 14px;
+                line-height: 1.8;
+                color: #4b5563;
+                margin: 20px 0;
+                white-space: pre-wrap;
+              }
+              .footer {
+                text-align: center;
+                font-size: 12px;
+                color: #9ca3af;
+                margin-top: 30px;
+                padding-top: 20px;
+                border-top: 1px solid #e5e7eb;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="content">
+                <div class="message">${relanceText.replace(/\n/g, '<br>')}</div>
+                
+                <div class="footer">
+                  <p>Cet email a été généré automatiquement par OPUS • <a href="https://opus.boutique" style="color: #9ca3af; text-decoration: none;">opus.boutique</a></p>
+                </div>
+              </div>
             </div>
           </body>
         </html>
