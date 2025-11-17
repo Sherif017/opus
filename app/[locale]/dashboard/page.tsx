@@ -1,4 +1,3 @@
-// FICHIER CORRIGÉ — Dashboard complet
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
@@ -13,6 +12,21 @@ interface Facture {
   montant_paye: number | null
   statut: string
   date_creation?: string
+}
+
+interface Devis {
+  statut: string
+  created_at?: string
+}
+
+interface Client {
+  id: string
+  created_at: string
+}
+
+interface Prospect {
+  id: string
+  created_at: string
 }
 
 interface Stats {
@@ -95,9 +109,9 @@ export default function DashboardPage() {
 
     const f = factures as Facture[] | null
     const totalFactures = f?.length ?? 0
-    const totalRevenue = f?.reduce((sum: number, x) => sum + (x.montant_total_ttc ?? 0), 0) ?? 0
-    const facturesPayees = f?.filter((x) => x.statut === 'payée').length ?? 0
-    const montantPaye = f?.reduce((sum: number, x) => sum + (x.montant_paye ?? 0), 0) ?? 0
+    const totalRevenue = f?.reduce((sum: number, x: Facture) => sum + (x.montant_total_ttc ?? 0), 0) ?? 0
+    const facturesPayees = f?.filter((x: Facture) => x.statut === 'payée').length ?? 0
+    const montantPaye = f?.reduce((sum: number, x: Facture) => sum + (x.montant_paye ?? 0), 0) ?? 0
     const montantImpaye = totalRevenue - montantPaye
 
     // CLIENTS
@@ -114,8 +128,9 @@ export default function DashboardPage() {
       .select('statut')
       .eq('entreprise_id', entrepriseId)
 
-    const totalDevis = devis?.length ?? 0
-    const devisAcceptes = devis?.filter((d) => d.statut === 'accepté').length ?? 0
+    const d = devis as Devis[] | null
+    const totalDevis = d?.length ?? 0
+    const devisAcceptes = d?.filter((d: Devis) => d.statut === 'accepté').length ?? 0
 
     // PROSPECTS
     const { data: prospects } = await supabase
@@ -138,8 +153,7 @@ export default function DashboardPage() {
     })
 
     await calculateTrends(entrepriseId)
-    await loadChartData(chartPeriod)
-  }, [chartPeriod])
+  }, [])
 
   const loadStats = useCallback(async () => {
     try {
@@ -173,7 +187,6 @@ export default function DashboardPage() {
     return () => clearInterval(interval)
   }, [loadStats, refreshStatsInBackground])
 
-
   // -------------------------------------------------------
   //   calculateTrends — typée et mémorisée
   // -------------------------------------------------------
@@ -198,9 +211,9 @@ export default function DashboardPage() {
         .lt('date_creation', d30.toISOString())
 
       const currSum =
-        currentFactures?.reduce((sum: number, x: any) => sum + (x.montant_total_ttc ?? 0), 0) ?? 0
+        currentFactures?.reduce((sum: number, x: Facture) => sum + (x.montant_total_ttc ?? 0), 0) ?? 0
       const prevSum =
-        previousFactures?.reduce((sum: number, x: any) => sum + (x.montant_total_ttc ?? 0), 0) ?? 0
+        previousFactures?.reduce((sum: number, x: Facture) => sum + (x.montant_total_ttc ?? 0), 0) ?? 0
 
       const revenuePercent =
         prevSum === 0 ? 100 : Math.round(((currSum - prevSum) / prevSum) * 100)
@@ -357,7 +370,7 @@ export default function DashboardPage() {
           }
         }
 
-        factures?.forEach((f) => {
+        factures?.forEach((f: Facture) => {
           const key = new Date(f.date_creation!).toLocaleDateString('fr-FR', {
             month: '2-digit',
             day: '2-digit',
@@ -368,7 +381,7 @@ export default function DashboardPage() {
           }
         })
 
-        clients?.forEach((c: any) => {
+        clients?.forEach((c: Client) => {
           const key = new Date(c.created_at).toLocaleDateString('fr-FR', {
             month: '2-digit',
             day: '2-digit',
@@ -376,7 +389,7 @@ export default function DashboardPage() {
           if (dataByDate[key]) dataByDate[key].clients += 1
         })
 
-        prospects?.forEach((p: any) => {
+        prospects?.forEach((p: Prospect) => {
           const key = new Date(p.created_at).toLocaleDateString('fr-FR', {
             month: '2-digit',
             day: '2-digit',
@@ -385,7 +398,7 @@ export default function DashboardPage() {
         })
 
         const sorted = Object.values(dataByDate).sort(
-          (a, b) =>
+          (a: ChartData, b: ChartData) =>
             new Date(a.date.split('/').reverse().join('-')).getTime() -
             new Date(b.date.split('/').reverse().join('-')).getTime()
         )
@@ -393,20 +406,20 @@ export default function DashboardPage() {
         setChartData(sorted)
 
         const maxRevenue =
-          Math.max(...sorted.map((d) => d.revenue), 1) || 1
+          Math.max(...sorted.map((d: ChartData) => d.revenue), 1) || 1
         setMaxValue(maxRevenue)
 
         // Stats sur la période
         const periodTotalRevenue =
-          factures?.reduce((s: number, x: any) => s + (x.montant_total_ttc ?? 0), 0) ??
+          factures?.reduce((s: number, x: Facture) => s + (x.montant_total_ttc ?? 0), 0) ??
           0
 
         const periodTotalFactures = factures?.length ?? 0
         const periodFacturesPayees =
-          factures?.filter((x: any) => x.statut === 'payée').length ?? 0
+          factures?.filter((x: Facture) => x.statut === 'payée').length ?? 0
 
         const periodMontantPaye =
-          factures?.reduce((s: number, x: any) => s + (x.montant_paye ?? 0), 0) ?? 0
+          factures?.reduce((s: number, x: Facture) => s + (x.montant_paye ?? 0), 0) ?? 0
 
         const periodMontantImpaye = periodTotalRevenue - periodMontantPaye
 
@@ -414,7 +427,7 @@ export default function DashboardPage() {
         const periodTotalProspects = prospects?.length ?? 0
         const periodTotalDevis = devis?.length ?? 0
         const periodDevisAcceptes =
-          devis?.filter((x: any) => x.statut === 'accepté').length ?? 0
+          devis?.filter((x: Devis) => x.statut === 'accepté').length ?? 0
 
         setPeriodStats({
           totalRevenue: periodTotalRevenue,
@@ -435,17 +448,27 @@ export default function DashboardPage() {
   )
 
   // -------------------------------------------------------
-  //     LE RESTE DU FICHIER = IDENTIQUE (UI)
+  //     RENDER — À COMPLÉTER AVEC TON JSX
   // -------------------------------------------------------
 
-  // Aucun changement UI → ton code JSX intact
-  // (Je n’affiche pas le JSX ici car tu as déjà tout dans ton fichier)
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading dashboard...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    // 🔥 Ton rendu JSX reste exactement le même qu’avant
-    // Rien n’a été modifié dans la partie UI
-    <>
-      {/* ... TON JSX COMPLET ICI ... */}
-    </>
+    <div className="space-y-8 p-6">
+      {/* Remplace ce placeholder par ton JSX complet */}
+      <div className="bg-white rounded-lg shadow p-6">
+        <h1 className="text-3xl font-bold">Dashboard</h1>
+        <p className="text-gray-600 mt-2">Bienvenue dans ton tableau de bord</p>
+      </div>
+    </div>
   )
 }
