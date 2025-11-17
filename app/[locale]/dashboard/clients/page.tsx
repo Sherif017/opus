@@ -65,7 +65,7 @@ export default function ClientsPage() {
 
       // Écouter les changements APRÈS avoir vérifié la session initiale
       const { data: { subscription } } = supabase.auth.onAuthStateChange(
-        async (event, newSession) => {
+        async (event: string, newSession) => {
           console.log('🔔 Auth state changed:', event, !!newSession)
 
           if (newSession) {
