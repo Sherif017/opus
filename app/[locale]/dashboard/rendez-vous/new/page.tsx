@@ -68,7 +68,7 @@ export default function NewRendezVousPage() {
         return
       }
 
-      const clients = (clientsData || []).map(c => ({
+      const clients = (clientsData || []).map((c: any) => ({
         id: c.id,
         nom: c.nom,
         type: 'client' as const,
