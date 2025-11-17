@@ -86,7 +86,7 @@ export default function PipelineKanbanPage() {
       })
 
       // Ajouter les prospects aux colonnes
-      prospects?.forEach(prospect => {
+      prospects?.forEach((prospect: Prospect) => {
         const status = prospect.statut_pipeline || 'nouveau'
         if (columnMap[status]) {
           columnMap[status].prospects.push(prospect)
