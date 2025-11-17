@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, Save, Loader, Upload, X, Eye, Check } from 'lucide-react'
 import { supabase } from '@/lib/supabase-client'
+import type { Session } from '@supabase/supabase-js'
 
 interface CompanyData {
   id: string
@@ -77,7 +78,7 @@ export default function CompanySettingsPage() {
           await loadUserData(session.user.id)
         } else {
           const { data: { subscription } } = supabase.auth.onAuthStateChange(
-            async (_event, newSession) => {
+            async (_event: string, newSession: Session | null) => {
               if (!isMounted) return
 
               if (newSession?.user) {
