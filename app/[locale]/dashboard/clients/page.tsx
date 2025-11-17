@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase-client'
 import { Plus, Trash2, Edit3, Mail, Phone } from 'lucide-react'
+import type { AuthChangeEvent, Session } from '@supabase/supabase-js'
 
 interface Client {
   id: string
@@ -28,6 +29,7 @@ export default function ClientsPage() {
   const [error, setError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+
   const [formData, setFormData] = useState({
     nom: '',
     prenom: '',
@@ -42,87 +44,68 @@ export default function ClientsPage() {
     notes: '',
   })
 
-  useEffect(() => {
-    initAuth()
-  }, [router])
-
-  const initAuth = async () => {
+  // ⛔ useEffect dépend de initAuth → on mémorise la fonction
+  const loadClientsWithToken = useCallback(async (token: string) => {
     try {
-      console.log('🔍 Checking initial session...')
-      
-      // D'abord vérifier la session existante
+      setLoading(true)
+      setError(null)
+
+      const response = await fetch('/api/dashboard/clients', {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || `API Error: ${response.status}`)
+      }
+
+      const { data } = await response.json()
+      setClients(data || [])
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error'
+      setError(message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  // ✔ Correction : typage + useCallback pour éviter les warnings
+  const initAuth = useCallback(async () => {
+    try {
       const { data: { session }, error: sessionError } = await supabase.auth.getSession()
-      
-      console.log('Session result:', { session: !!session, error: sessionError })
 
       if (session) {
-        console.log('✅ Session found, loading clients')
         await loadClientsWithToken(session.access_token)
       } else {
-        console.log('❌ No session found')
         setLoading(false)
       }
 
-      // Écouter les changements APRÈS avoir vérifié la session initiale
       const { data: { subscription } } = supabase.auth.onAuthStateChange(
-        async (event: string, newSession) => {
-          console.log('🔔 Auth state changed:', event, !!newSession)
-
+        async (event: AuthChangeEvent, newSession: Session | null) => {
           if (newSession) {
-            console.log('✅ New session detected')
             await loadClientsWithToken(newSession.access_token)
           } else {
-            console.log('❌ Session lost, redirecting to login')
             setLoading(false)
             router.push('/auth/login')
           }
         }
       )
 
-      return () => {
-        subscription?.unsubscribe()
-      }
+      return () => subscription?.unsubscribe()
     } catch (err) {
-      console.error('Error in initAuth:', err)
       setLoading(false)
       router.push('/auth/login')
     }
-  }
+  }, [router, loadClientsWithToken])
 
-  const loadClientsWithToken = async (token: string) => {
-    try {
-      setLoading(true)
-      setError(null)
-
-      console.log('📡 Fetching clients with token')
-
-      const response = await fetch('/api/dashboard/clients', {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      })
-
-      console.log('📊 API response:', response.status)
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        console.error('❌ API error:', errorData)
-        throw new Error(errorData.error || `API Error: ${response.status}`)
-      }
-
-      const { data } = await response.json()
-      console.log('✅ Clients loaded:', data?.length || 0)
-      setClients(data || [])
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error'
-      console.error('❌ Error loading clients:', err)
-      setError(message)
-    } finally {
-      setLoading(false)
-    }
-  }
+  // ✔ Correction : initAuth ajouté dans les dépendances
+  useEffect(() => {
+    initAuth()
+  }, [initAuth])
 
   const handleAddClient = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -131,53 +114,45 @@ export default function ClientsPage() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) throw new Error('No session')
 
+      const body = {
+        nom: formData.nom,
+        prenom: formData.prenom || null,
+        email: formData.email || null,
+        phone: formData.phone || null,
+        adresse: formData.adresse || null,
+        code_postal: formData.code_postal || null,
+        ville: formData.ville || null,
+        segment: formData.segment || null,
+        source_acquisition: formData.source_acquisition || null,
+        tags: formData.tags ? formData.tags.split(',').map(t => t.trim()) : null,
+        notes: formData.notes || null,
+      }
+
+      let response
+
       if (editingId) {
-        const response = await fetch(`/api/dashboard/clients/${editingId}`, {
+        response = await fetch(`/api/dashboard/clients/${editingId}`, {
           method: 'PATCH',
           headers: {
-            'Authorization': `Bearer ${session.access_token}`,
+            Authorization: `Bearer ${session.access_token}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            nom: formData.nom,
-            prenom: formData.prenom || null,
-            email: formData.email || null,
-            phone: formData.phone || null,
-            adresse: formData.adresse || null,
-            code_postal: formData.code_postal || null,
-            ville: formData.ville || null,
-            segment: formData.segment || null,
-            source_acquisition: formData.source_acquisition || null,
-            tags: formData.tags ? formData.tags.split(',').map(t => t.trim()) : null,
-            notes: formData.notes || null,
-          }),
+          body: JSON.stringify(body),
         })
 
         if (!response.ok) throw new Error('Modification error')
 
         const { data } = await response.json()
-        setClients(clients.map(c => c.id === editingId ? data : c))
+        setClients(clients.map((c) => (c.id === editingId ? data : c)))
         setEditingId(null)
       } else {
-        const response = await fetch('/api/dashboard/clients', {
+        response = await fetch('/api/dashboard/clients', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${session.access_token}`,
+            Authorization: `Bearer ${session.access_token}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            nom: formData.nom,
-            prenom: formData.prenom || null,
-            email: formData.email || null,
-            phone: formData.phone || null,
-            adresse: formData.adresse || null,
-            code_postal: formData.code_postal || null,
-            ville: formData.ville || null,
-            segment: formData.segment || null,
-            source_acquisition: formData.source_acquisition || null,
-            tags: formData.tags ? formData.tags.split(',').map(t => t.trim()) : null,
-            notes: formData.notes || null,
-          }),
+          body: JSON.stringify(body),
         })
 
         if (!response.ok) throw new Error('Creation error')
@@ -201,7 +176,6 @@ export default function ClientsPage() {
       })
       setShowForm(false)
     } catch (err) {
-      console.error('Error adding client:', err)
       alert('Error: ' + (err instanceof Error ? err.message : 'Unknown'))
     }
   }
@@ -216,15 +190,14 @@ export default function ClientsPage() {
       const response = await fetch(`/api/dashboard/clients/${id}`, {
         method: 'DELETE',
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          Authorization: `Bearer ${session.access_token}`,
         },
       })
 
       if (!response.ok) throw new Error('Deletion error')
 
-      setClients(clients.filter(c => c.id !== id))
+      setClients(clients.filter((c) => c.id !== id))
     } catch (err) {
-      console.error('Error deleting client:', err)
       alert('Error: ' + (err instanceof Error ? err.message : 'Unknown'))
     }
   }
@@ -284,6 +257,8 @@ export default function ClientsPage() {
         <div className="bg-white rounded-lg shadow p-6">
           <form onSubmit={handleAddClient} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
+              {/** 🔧 Les inputs restent identiques à ton code d’origine */}
+              {/* ----- FORMULAIRE INCHANGÉ ----- */}
               <input
                 type="text"
                 placeholder="Name *"
@@ -383,7 +358,10 @@ export default function ClientsPage() {
             <div key={client.id} className="bg-white rounded-lg shadow p-4">
               <div className="flex items-center justify-between">
                 <div className="flex-1">
-                  <h3 className="font-bold text-lg">{client.nom} {client.prenom}</h3>
+                  <h3 className="font-bold text-lg">
+                    {client.nom} {client.prenom}
+                  </h3>
+
                   <div className="flex items-center gap-4 mt-2 text-sm text-gray-600">
                     {client.email && (
                       <div className="flex items-center gap-1">
@@ -391,6 +369,7 @@ export default function ClientsPage() {
                         {client.email}
                       </div>
                     )}
+
                     {client.phone && (
                       <div className="flex items-center gap-1">
                         <Phone className="w-4 h-4" />
@@ -398,17 +377,25 @@ export default function ClientsPage() {
                       </div>
                     )}
                   </div>
-                  {client.ville && <p className="text-sm mt-2 text-gray-600">{client.ville}</p>}
+
+                  {client.ville && (
+                    <p className="text-sm mt-2 text-gray-600">{client.ville}</p>
+                  )}
+
                   {client.tags && client.tags.length > 0 && (
                     <div className="flex gap-2 mt-2">
                       {client.tags.map((tag, i) => (
-                        <span key={i} className="px-2 py-1 rounded text-xs font-semibold bg-gray-100 text-gray-700">
+                        <span
+                          key={i}
+                          className="px-2 py-1 rounded text-xs font-semibold bg-gray-100 text-gray-700"
+                        >
                           {tag}
                         </span>
                       ))}
                     </div>
                   )}
                 </div>
+
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => handleEdit(client)}
@@ -416,6 +403,7 @@ export default function ClientsPage() {
                   >
                     <Edit3 className="w-4 h-4" />
                   </button>
+
                   <button
                     onClick={() => handleDelete(client.id)}
                     className="p-2 text-gray-600 hover:text-red-600"
