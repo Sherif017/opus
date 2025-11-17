@@ -62,44 +62,38 @@ export default function RendezVousPage() {
     }
   }
 
-  const fetchRendezVous = async () => {
+  const fetchRendezVous = async (token?: string) => {
     try {
-      // ✅ Récupérer la session
-      const { data: { session } } = await supabase.auth.getSession()
-      
-      if (!session?.user?.id) {
-        console.error('❌ Pas de session')
+      // ✅ Récupérer le token de la session si pas fourni
+      let accessToken = token
+      if (!accessToken) {
+        const { data: { session } } = await supabase.auth.getSession()
+        
+        if (!session?.access_token) {
+          console.error('❌ Pas de session')
+          return
+        }
+        accessToken = session.access_token
+      }
+
+      // ✅ Appeler la nouvelle API sécurisée avec le token
+      const response = await fetch('/api/dashboard/rendez-vous', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        console.error('❌ Erreur API:', error)
         return
       }
 
-      // ✅ Récupérer l'entreprise_id de l'utilisateur
-      const { data: userData, error: userError } = await supabase
-        .from('utilisateurs')
-        .select('entreprise_id')
-        .eq('id', session.user.id)
-        .single()
-
-      if (userError || !userData) {
-        console.error('❌ Erreur récupération utilisateur:', userError)
-        return
-      }
-
-      const entrepriseId = userData.entreprise_id
-
-      // ✅ Charger les RDV de l'entreprise avec les clients
-      const { data: rdvsData, error: rdvsError } = await supabase
-        .from('rendez_vous')
-        .select('*, clients(id, nom)')
-        .eq('entreprise_id', entrepriseId)
-        .order('date_rendez_vous', { ascending: false })
-
-      if (rdvsError) {
-        console.error('❌ Erreur récupération RDV:', rdvsError)
-        return
-      }
-
-      console.log('✅ RDV chargés:', rdvsData)
-      setRdvs(rdvsData || [])
+      const data = await response.json()
+      console.log('✅ RDV chargés:', data.rdvs)
+      setRdvs(data.rdvs || [])
     } catch (error) {
       console.error('❌ Erreur chargement RDV:', error)
     }
@@ -120,7 +114,7 @@ export default function RendezVousPage() {
       appel: '📞',
       reunion: '🤝',
       visioconference: '💻',
-      visite_chantier: '📍',
+      visite_chantier: '🏗️',
       autre: '📌',
     }
     return icons[type] || '📅'
@@ -139,12 +133,17 @@ export default function RendezVousPage() {
     if (!confirm('Êtes-vous sûr de vouloir supprimer ce rendez-vous ?')) return
 
     try {
-      const { error } = await supabase
-        .from('rendez_vous')
-        .delete()
-        .eq('id', id)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) throw new Error('No session')
 
-      if (error) throw error
+      const response = await fetch(`/api/dashboard/rendez-vous/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+      })
+
+      if (!response.ok) throw new Error('Erreur suppression')
 
       setRdvs(rdvs.filter(r => r.id !== id))
       alert('Rendez-vous supprimé !')

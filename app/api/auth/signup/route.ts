@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
 
   try {
     // ✅ Créer les clients DANS la fonction (pas au niveau du module)
-            const { email, password, nomEntreprise, nomArtisan, prenomArtisan } =
+    const { email, password, nomEntreprise, nomArtisan, prenomArtisan } =
       await req.json()
 
     // Validation basique
@@ -42,15 +42,15 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // ✅ VÉRIFIER SI L'EMAIL EXISTE DÉJÀ - utiliser supabaseAdmin
+    // ✅ VÉRIFIER SI L'EMAIL EXISTE DÉJÀ - avec gestion d'erreur correcte
     const { data: existingUser, error: checkError } = await supabaseAdmin
       .from('utilisateurs')
       .select('email')
       .eq('email', email)
-      .single()
+      .maybeSingle()  // ← UTILISER maybeSingle() au lieu de single()
 
     if (existingUser) {
-      // L'email existe déjà
+      // L'email existe déjà 
       return NextResponse.json(
         { error: 'Cet email est déjà lié à un compte' },
         { status: 400 }
@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
       throw new Error('Erreur lors de la création de l\'utilisateur')
     }
 
-    // 2. Créer l'entreprise - utiliser supabaseAdmin
+    // 2. Créer l'entreprise UNIQUE pour cet utilisateur - utiliser supabaseAdmin
     const { data: company, error: companyError } = await supabaseAdmin
       .from('entreprises')
       .insert([
@@ -98,13 +98,17 @@ export async function POST(req: NextRequest) {
       throw companyError
     }
 
-    // 3. Ajouter l'utilisateur dans la table utilisateurs - utiliser supabaseAdmin
+    if (!company || !company.id) {
+      throw new Error('Erreur lors de la création de l\'entreprise')
+    }
+
+    // 3. Ajouter l'utilisateur dans la table utilisateurs avec SA PROPRE entreprise_id
     const { error: userError } = await supabaseAdmin
       .from('utilisateurs')
       .insert([
         {
           id: authData.user.id,
-          entreprise_id: company.id,
+          entreprise_id: company.id,  // ← CHAQUE UTILISATEUR A SA PROPRE ENTREPRISE
           email: email,
           nom: nomArtisan,
           prenom: prenomArtisan || '',

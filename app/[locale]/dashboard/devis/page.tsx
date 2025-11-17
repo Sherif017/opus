@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase-client'
-import { Card } from '@/components/ui/Card'
-import { Plus, FileText, StickyNote, ChevronDown } from 'lucide-react'
+import { Plus, FileText, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
 
 interface Client {
@@ -20,7 +19,6 @@ interface Devis {
   montant_total_ht?: number
   montant_tva?: number
   montant_total_ttc?: number
-  notes?: string
   date_creation: string
   clients?: Client
 }
@@ -30,30 +28,28 @@ export default function DevisPage() {
   const [loading, setLoading] = useState(true)
   const [downloading, setDownloading] = useState<string | null>(null)
   const [sending, setSending] = useState<string | null>(null)
-  const [expandedNotes, setExpandedNotes] = useState<string | null>(null)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [formData, setFormData] = useState({
-    notes: '',
-  })
+  const [refreshing, setRefreshing] = useState(false)
 
   useEffect(() => {
     init()
-    
-    // ✅ Auto-refresh toutes les 2 secondes pour détecter les nouveaux devis
-    const interval = setInterval(() => {
-      refreshDevis()
-    }, 2000)
-
-    return () => clearInterval(interval)
   }, [])
 
   const init = async () => {
     try {
       setLoading(true)
-      await refreshDevis()
+      
+      // ✅ Vérifier que la session est prête AVANT de charger les devis
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      if (!session) {
+        console.error('❌ No session found during init')
+        setLoading(false)
+        return
+      }
+
+      await refreshDevis(session.access_token)
     } catch (error) {
       console.error('Error in init:', error)
-    } finally {
       setLoading(false)
     }
   }
@@ -61,23 +57,27 @@ export default function DevisPage() {
   /**
    * ✅ Fonction de rafraîchissement via API sécurisée
    */
-  const refreshDevis = async () => {
+  const refreshDevis = async (token?: string) => {
     try {
-      // ✅ Récupérer le token de la session
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+      // ✅ Récupérer le token de la session si pas fourni
+      let accessToken = token
+      if (!accessToken) {
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession()
 
-      if (sessionError || !session?.access_token) {
-        console.error('❌ No session found:', sessionError)
-        return
+        if (sessionError || !session?.access_token) {
+          console.warn('⚠️  Session not ready yet')
+          return
+        }
+        accessToken = session.access_token
       }
 
-      console.log('🔄 Fetching devis with token...')
+      console.log('📄 Fetching devis with token...')
 
-      // ✅ Appeler l'API sécurisée avec le token
-      const response = await fetch('/api/devis/list', {
+      // ✅ Appeler la nouvelle API sécurisée avec le token
+      const response = await fetch('/api/dashboard/devis', {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
       })
@@ -93,347 +93,147 @@ export default function DevisPage() {
       setDevis(data.devis || [])
     } catch (error) {
       console.error('Error refreshing devis:', error)
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
     }
   }
 
-  const getLignesDevis = async (devisId: string) => {
-    const { data } = await supabase
-      .from('devis_lignes')
-      .select('*')
-      .eq('devis_id', devisId)
-
-    return data || []
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    await refreshDevis()
   }
 
-  const handleDownloadPDF = async (devisItem: Devis) => {
-    setDownloading(devisItem.id)
-
+  const handleDownload = async (devisId: string) => {
     try {
-      const lignes = await getLignesDevis(devisItem.id)
-
-      const response = await fetch('/api/generate-devis-pdf', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          devisData: devisItem,
-          lignes: lignes,
-          clientData: { nom: devisItem.clients?.nom },
-          entrepriseData: { nom: 'OPUS' },
-        }),
-      })
-
+      setDownloading(devisId)
+      const response = await fetch(`/api/devis/generate-pdf?devisId=${devisId}`)
+      
       if (!response.ok) throw new Error('Erreur génération PDF')
-
+      
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `devis-${devisItem.numero_devis}.pdf`
-      document.body.appendChild(a)
+      a.download = `devis-${devisId}.pdf`
       a.click()
-      window.URL.revokeObjectURL(url)
-      document.body.removeChild(a)
-
-      alert('PDF téléchargé !')
     } catch (error) {
-      console.error('Error:', error)
+      console.error('Error downloading:', error)
       alert('Erreur lors du téléchargement')
     } finally {
       setDownloading(null)
     }
   }
 
-  const handleSendByEmail = async (devisItem: Devis) => {
-    if (!devisItem.clients?.email) {
-      alert('Email du client non disponible')
+  const handleSendEmail = async (devisId: string, clientEmail?: string) => {
+    if (!clientEmail) {
+      alert('Email du client manquant')
       return
     }
 
-    setSending(devisItem.id)
-
     try {
-      const lignes = await getLignesDevis(devisItem.id)
-
+      setSending(devisId)
       const response = await fetch('/api/send-devis-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          devisData: devisItem,
-          lignes: lignes,
-          clientEmail: devisItem.clients.email,
-          clientName: devisItem.clients.nom,
-          entrepriseData: { nom: 'OPUS' },
-        }),
+        body: JSON.stringify({ devisId, email: clientEmail }),
       })
 
-      const data = await response.json()
-
-      if (!response.ok) throw new Error(data.error || 'Erreur envoi')
-
-      alert('Devis envoyé par email !')
+      if (!response.ok) throw new Error('Erreur envoi email')
+      
+      alert('Email envoyé avec succès')
     } catch (error) {
-      console.error('Error:', error)
-      alert('Erreur: ' + (error instanceof Error ? error.message : 'Unknown'))
+      console.error('Error sending:', error)
+      alert('Erreur lors de l\'envoi')
     } finally {
       setSending(null)
     }
   }
 
-  const handleSaveNotes = async (e: React.FormEvent) => {
-    e.preventDefault()
-
-    try {
-      const { error } = await supabase
-        .from('devis')
-        .update({
-          notes: formData.notes || null,
-        })
-        .eq('id', editingId)
-
-      if (error) throw error
-
-      setDevis(devis.map(d => d.id === editingId ? {
-        ...d,
-        notes: formData.notes || undefined,
-      } : d))
-
-      setEditingId(null)
-      setFormData({ notes: '' })
-    } catch (error) {
-      console.error('Error:', error)
-      alert('Erreur: ' + (error instanceof Error ? error.message : 'Unknown'))
-    }
-  }
-
-  const handleDeleteDevis = async (id: string) => {
-    if (!confirm('Êtes-vous sûr de vouloir supprimer ce devis ?')) return
-
-    try {
-      const { error: lignesError } = await supabase
-        .from('devis_lignes')
-        .delete()
-        .eq('devis_id', id)
-
-      if (lignesError) throw lignesError
-
-      const { error: devisError } = await supabase
-        .from('devis')
-        .delete()
-        .eq('id', id)
-
-      if (devisError) throw devisError
-
-      setDevis(devis.filter(d => d.id !== id))
-      alert('Devis supprimé!')
-    } catch (error) {
-      console.error('Error:', error)
-      alert('Erreur lors de la suppression')
-    }
-  }
-
-  const getStatutColor = (statut: string) => {
-    const colors: Record<string, string> = {
-      brouillon: 'bg-gray-100 text-gray-700 border border-gray-200',
-      envoyé: 'bg-blue-100 text-blue-700 border border-blue-200',
-      accepté: 'bg-green-100 text-green-700 border border-green-200',
-      rejeté: 'bg-red-100 text-red-700 border border-red-200',
-      facturé: 'bg-purple-100 text-purple-700 border border-purple-200',
-    }
-    return colors[statut] || 'bg-gray-100 text-gray-700'
-  }
-
-  if (loading) return (
-    <div className="flex items-center justify-center h-96">
-      <div className="text-center">
-        <div className="w-12 h-12 rounded-full bg-blue-100 mx-auto mb-4 flex items-center justify-center">
-          <FileText className="w-6 h-6 text-blue-600" />
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Chargement des devis...</p>
         </div>
-        <p className="text-gray-700 font-semibold">Chargement des devis...</p>
       </div>
-    </div>
-  )
+    )
+  }
+
+  const totalAmount = devis.reduce((sum, d) => sum + (d.montant_total_ttc || 0), 0)
 
   return (
-    <div className="space-y-8 pb-8">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+    <div className="space-y-8 p-6">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-5xl font-bold bg-gradient-to-r from-blue-600 to-blue-700 bg-clip-text text-transparent mb-2">Devis</h1>
-          <p className="text-lg text-gray-600">{devis.length} devis en base</p>
+          <h1 className="text-4xl font-bold text-gray-900">Devis</h1>
+          <p className="text-gray-600 mt-2">{devis.length} devis • Montant total : {totalAmount.toLocaleString()}€</p>
         </div>
-        <Link href="/dashboard/devis/new">
-          <button className="flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-2xl font-semibold transition-all shadow-lg hover:shadow-xl">
-            <Plus className="w-5 h-5" />
-            Créer un devis
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Rafraîchissement...' : 'Rafraîchir'}
           </button>
-        </Link>
-      </div>
-
-      {/* Liste des devis */}
-      {devis.length === 0 ? (
-        <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-200 rounded-3xl p-16 text-center shadow-lg">
-          <div className="w-20 h-20 bg-blue-200 rounded-full flex items-center justify-center mx-auto mb-6">
-            <FileText className="w-10 h-10 text-blue-600" />
-          </div>
-          <p className="text-gray-800 text-xl font-bold mb-2">Aucun devis trouvé</p>
-          <p className="text-gray-700 mb-8">Commencez par créer votre premier devis</p>
           <Link href="/dashboard/devis/new">
-            <button className="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-xl font-bold transition-all shadow-lg">
-              <Plus className="w-5 h-5" />
-              Créer un devis
+            <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+              <Plus className="w-4 h-4" />
+              Nouveau devis
             </button>
           </Link>
-        </Card>
-      ) : (
-        <div className="grid gap-4">
-          {devis.map((d, index) => {
-            const isNotesOpen = expandedNotes === d.id
-            const isEditing = editingId === d.id
+        </div>
+      </div>
 
-            // Formulaire de modification des notes
-            if (isEditing) {
-              return (
-                <Card key={d.id} className="bg-gradient-to-br from-white to-gray-50 border border-gray-200 rounded-3xl p-8 shadow-lg">
-                  <h2 className="text-3xl font-bold text-gray-900 mb-1">
-                    Modifier les notes
-                  </h2>
-                  <p className="text-gray-600 text-sm mb-8">Devis {index + 1}</p>
-                  
-                  <form onSubmit={handleSaveNotes} className="space-y-6">
-                    {/* Notes */}
-                    <div className="bg-white rounded-xl p-4 border border-gray-200">
-                      <label className="block text-sm font-bold text-gray-700 mb-2">📝 Notes</label>
-                      <textarea
-                        value={formData.notes}
-                        onChange={(e) => setFormData({...formData, notes: e.target.value})}
-                        placeholder="Ajoutez des notes sur ce devis..."
-                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 resize-vertical min-h-[120px] font-medium"
-                      />
-                      <p className="text-xs text-gray-500 mt-2">{formData.notes.length}/500 caractères</p>
-                    </div>
-
-                    {/* Boutons */}
-                    <div className="flex gap-3 pt-6">
-                      <button
-                        type="submit"
-                        className="flex-1 px-6 py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white rounded-xl font-bold transition-all shadow-lg hover:shadow-xl"
-                      >
-                        Enregistrer
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingId(null)
-                          setFormData({ notes: '' })
-                        }}
-                        className="flex-1 px-6 py-3 bg-gray-200 hover:bg-gray-300 text-gray-900 rounded-xl font-bold transition-colors"
-                      >
-                        Annuler
-                      </button>
-                    </div>
-                  </form>
-                </Card>
-              )
-            }
-
-            // Affichage normal du devis
-            return (
-              <Card key={d.id} className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition-all">
-                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-6">
-                  {/* Infos principales */}
-                  <div className="flex-1">
-                    <div className="flex items-baseline gap-3 mb-4">
-                      <h3 className="text-2xl font-bold text-gray-900">Devis {index + 1}</h3>
-                      <p className="text-lg text-gray-700 font-semibold">{d.clients?.nom}</p>
-                    </div>
-
-                    <div className="space-y-2 text-sm">
-                      <p className="text-gray-600">
-                        <span className="font-semibold">Montant TTC :</span> <span className="text-lg font-bold text-gray-900">{(d.montant_total_ttc || 0).toFixed(2)}€</span>
-                      </p>
-                      <p className="text-gray-600">
-                        <span className="font-semibold">Date :</span> {new Date(d.date_creation).toLocaleDateString('fr-FR')}
-                      </p>
-                      <p className="text-gray-600">
-                        <span className="font-semibold">Statut :</span> <span className={`inline-block px-2 py-1 rounded text-sm font-bold ${getStatutColor(d.statut)}`}>
-                          {d.statut}
-                        </span>
-                      </p>
-
-                      {d.notes && (
-                        <button
-                          onClick={() => setExpandedNotes(isNotesOpen ? null : d.id)}
-                          className="flex items-center gap-2 text-amber-700 text-sm font-semibold hover:text-amber-800 transition-colors mt-2"
-                        >
-                          <StickyNote className="w-4 h-4 flex-shrink-0" />
-                          <span>Notes ({d.notes.length} caractères)</span>
-                          <ChevronDown className={`w-4 h-4 transition-transform ${isNotesOpen ? 'rotate-180' : ''}`} />
-                        </button>
-                      )}
-
-                      {isNotesOpen && d.notes && (
-                        <div className="mt-3 p-3 bg-amber-50 rounded border-l-4 border-amber-400">
-                          <p className="text-gray-800 text-sm whitespace-pre-wrap">{d.notes}</p>
-                        </div>
-                      )}
+      <div className="grid gap-4">
+        {devis.length === 0 ? (
+          <div className="text-center py-12">
+            <p className="text-gray-500">Aucun devis créé</p>
+          </div>
+        ) : (
+          devis.map((d) => (
+            <div key={d.id} className="bg-white rounded-lg shadow p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex-1">
+                  <div className="flex items-center gap-4">
+                    <FileText className="w-5 h-5 text-blue-600" />
+                    <div>
+                      <h3 className="font-bold text-lg">{d.numero_devis}</h3>
+                      <p className="text-sm text-gray-600">{d.clients?.nom || 'Client inconnu'}</p>
                     </div>
                   </div>
-
-                  {/* Actions */}
-                  <div className="flex flex-wrap gap-2 w-full sm:w-auto sm:flex-col-reverse">
-                    <button
-                      onClick={() => handleDeleteDevis(d.id)}
-                      className="px-3 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded font-semibold text-sm transition-colors"
-                    >
-                      Supprimer
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        setFormData({ notes: d.notes || '' })
-                        setEditingId(d.id)
-                      }}
-                      className="px-3 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded font-semibold text-sm transition-colors"
-                    >
-                      Modifier
-                    </button>
-
-                    <button
-                      onClick={() => handleDownloadPDF(d)}
-                      disabled={downloading === d.id}
-                      className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded font-semibold text-sm transition-colors disabled:opacity-50"
-                    >
-                      {downloading === d.id ? 'PDF...' : 'PDF'}
-                    </button>
-
-                    <button
-                      onClick={() => handleSendByEmail(d)}
-                      disabled={sending === d.id}
-                      className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded font-semibold text-sm transition-colors disabled:opacity-50"
-                    >
-                      {sending === d.id ? 'Email...' : 'Email'}
-                    </button>
-
-                    {d.statut === 'accepté' && (
-                      <Link href={`/dashboard/factures/new?devis_id=${d.id}`}>
-                        <button className="px-3 py-2 bg-green-100 hover:bg-green-200 text-green-700 rounded font-semibold text-sm transition-colors">
-                          Facture
-                        </button>
-                      </Link>
-                    )}
-
-                    <Link href={`/dashboard/devis/${d.id}`}>
-                      <button className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded font-semibold text-sm transition-colors">
-                        Éditer
-                      </button>
-                    </Link>
+                  <div className="flex items-center gap-4 mt-3 text-sm">
+                    <span className="px-2 py-1 rounded text-xs font-semibold bg-green-100 text-green-700">
+                      {d.statut}
+                    </span>
+                    <span className="font-bold text-gray-900">{d.montant_total_ttc?.toLocaleString()}€</span>
+                    <span className="text-gray-600">{new Date(d.date_creation).toLocaleDateString('fr-FR')}</span>
                   </div>
                 </div>
-              </Card>
-            )
-          })}
-        </div>
-      )}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleDownload(d.id)}
+                    disabled={downloading === d.id}
+                    className="px-3 py-2 text-sm font-semibold text-blue-600 hover:bg-blue-50 rounded disabled:opacity-50"
+                  >
+                    {downloading === d.id ? 'Téléchargement...' : 'Télécharger'}
+                  </button>
+                  <button
+                    onClick={() => handleSendEmail(d.id, d.clients?.email)}
+                    disabled={sending === d.id}
+                    className="px-3 py-2 text-sm font-semibold text-green-600 hover:bg-green-50 rounded disabled:opacity-50"
+                  >
+                    {sending === d.id ? 'Envoi...' : 'Envoyer'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
     </div>
   )
 }

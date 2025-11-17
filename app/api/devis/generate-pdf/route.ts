@@ -3,7 +3,7 @@ import jsPDF from 'jspdf'
 import { addLogoToHeader, addCompanyHeaderSection, addLegalFooter, calculateTotalsByVAT } from '@/lib/pdf-utils'
 import { supabase } from '@/lib/supabase-client'
 
-interface LigneFacture {
+interface LigneDevis {
   description: string
   quantite: number
   prix_unitaire: number
@@ -12,54 +12,52 @@ interface LigneFacture {
 
 export async function GET(req: NextRequest) {
   try {
-    const factureId = req.nextUrl.searchParams.get('factureId')
+    const devisId = req.nextUrl.searchParams.get('devisId')
 
-    if (!factureId) {
+    if (!devisId) {
       return NextResponse.json(
-        { error: 'factureId manquant' },
+        { error: 'devisId manquant' },
         { status: 400 }
       )
     }
 
-    // ✅ Récupérer la facture depuis Supabase
-    const { data: facture, error: factureError } = await supabase
-      .from('factures')
+    // ✅ Récupérer le devis depuis Supabase
+    const { data: devis, error: devisError } = await supabase
+      .from('devis')
       .select(`
         *,
         clients(*),
         entreprises(*)
       `)
-      .eq('id', factureId)
+      .eq('id', devisId)
       .single()
 
-    if (factureError || !facture) {
-      console.error('Erreur récupération facture:', factureError)
+    if (devisError || !devis) {
+      console.error('Erreur récupération devis:', devisError)
       return NextResponse.json(
-        { error: 'Facture non trouvée' },
+        { error: 'Devis non trouvé' },
         { status: 404 }
       )
     }
 
     // ✅ Générer le PDF
-    const pdf = await generateFacturePDF({
-      factureData: {
-        numero_facture: facture.numero_facture,
-        date_creation: facture.date_creation,
-        date_echeance: facture.date_echeance,
-        montant_total_ht: facture.montant_total_ht,
-        montant_tva: facture.montant_tva,
-        montant_total_ttc: facture.montant_total_ttc,
-        montant_paye: facture.montant_paye,
+    const pdf = await generateDevisPDF({
+      devisData: {
+        numero_devis: devis.numero_devis,
+        date_creation: devis.date_creation,
+        montant_total_ht: devis.montant_total_ht,
+        montant_tva: devis.montant_tva,
+        montant_total_ttc: devis.montant_total_ttc,
       },
-      lignes: facture.lignes || [],
+      lignes: devis.lignes || [],
       clientData: {
-        nom: facture.clients?.nom,
-        adresse: facture.clients?.adresse,
-        code_postal: facture.clients?.code_postal,
-        ville: facture.clients?.ville,
-        tva_number: facture.clients?.tva_number,
+        nom: devis.clients?.nom,
+        adresse: devis.clients?.adresse,
+        code_postal: devis.clients?.code_postal,
+        ville: devis.clients?.ville,
+        tva_number: devis.clients?.tva_number,
       },
-      entrepriseData: facture.entreprises || {},
+      entrepriseData: devis.entreprises || {},
     })
 
     const pdfBuffer = pdf.output('arraybuffer')
@@ -67,7 +65,7 @@ export async function GET(req: NextRequest) {
     return new NextResponse(pdfBuffer, {
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="facture-${facture.numero_facture}.pdf"`,
+        'Content-Disposition': `attachment; filename="devis-${devis.numero_devis}.pdf"`,
       },
     })
   } catch (error) {
@@ -81,9 +79,9 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { factureData, lignes, clientData, entrepriseData } = await req.json()
+    const { devisData, lignes, clientData, entrepriseData } = await req.json()
 
-    if (!factureData || !lignes || !clientData) {
+    if (!devisData || !lignes || !clientData) {
       return NextResponse.json(
         { error: 'Données manquantes' },
         { status: 400 }
@@ -91,8 +89,8 @@ export async function POST(req: NextRequest) {
     }
 
     // ✅ Générer le PDF
-    const pdf = await generateFacturePDF({
-      factureData,
+    const pdf = await generateDevisPDF({
+      devisData,
       lignes,
       clientData,
       entrepriseData,
@@ -103,7 +101,7 @@ export async function POST(req: NextRequest) {
     return new NextResponse(pdfBuffer, {
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="facture-${factureData.numero_facture}.pdf"`,
+        'Content-Disposition': `attachment; filename="devis-${devisData.numero_devis}.pdf"`,
       },
     })
   } catch (error) {
@@ -116,16 +114,16 @@ export async function POST(req: NextRequest) {
 }
 
 /**
- * ✅ Fonction générique pour générer le PDF facture
+ * ✅ Fonction générique pour générer le PDF devis
  */
-async function generateFacturePDF({
-  factureData,
+async function generateDevisPDF({
+  devisData,
   lignes,
   clientData,
   entrepriseData,
 }: {
-  factureData: any
-  lignes: LigneFacture[]
+  devisData: any
+  lignes: LigneDevis[]
   clientData: any
   entrepriseData: any
 }) {
@@ -142,38 +140,36 @@ async function generateFacturePDF({
     await addLogoToHeader(pdf, entrepriseData.logo_url)
   }
 
-  // ===== 2. TITRE FACTURE =====
+  // ===== 2. TITRE DEVIS =====
   pdf.setFontSize(24)
   pdf.setTextColor(59, 130, 246)
-  pdf.text('FACTURE', pageWidth - 50, 20)
+  pdf.text('DEVIS', pageWidth - 50, 20)
 
   pdf.setFontSize(10)
   pdf.setTextColor(0, 0, 0)
-  pdf.text(factureData.numero_facture, pageWidth - 50, 28)
+  pdf.text(devisData.numero_devis, pageWidth - 50, 28)
 
   // ===== 3. INFOS ENTREPRISE COMPLÈTES =====
   let yPosition = addCompanyHeaderSection(pdf, entrepriseData, 50)
 
-  // ===== 4. INFOS FACTURE (côté droit) =====
+  // ===== 4. INFOS DEVIS (côté droit) =====
   pdf.setFontSize(9)
   pdf.setFont('helvetica', 'normal')
 
   yPosition = 50
   const rightColumnX = pageWidth - 70
 
-  pdf.text(`Facture: ${factureData.numero_facture}`, rightColumnX, yPosition)
+  pdf.text(`Devis: ${devisData.numero_devis}`, rightColumnX, yPosition)
   yPosition += 5
-  pdf.text(`Date: ${new Date(factureData.date_creation).toLocaleDateString('fr-FR')}`, rightColumnX, yPosition)
+  pdf.text(`Date: ${new Date(devisData.date_creation).toLocaleDateString('fr-FR')}`, rightColumnX, yPosition)
   yPosition += 5
-  if (factureData.date_echeance) {
-    pdf.text(`Échéance: ${new Date(factureData.date_echeance).toLocaleDateString('fr-FR')}`, rightColumnX, yPosition)
-  }
+  pdf.text('Validité: 30 jours', rightColumnX, yPosition)
 
   // ===== 5. SECTION CLIENT =====
   yPosition += 15
   pdf.setFont('helvetica', 'bold')
   pdf.setFontSize(10)
-  pdf.text('FACTURÉ À:', 20, yPosition)
+  pdf.text('DEVIS ÉTABLI POUR:', 20, yPosition)
   yPosition += 5
 
   pdf.setFont('helvetica', 'normal')
@@ -198,25 +194,25 @@ async function generateFacturePDF({
 
   yPosition += 8
 
-  // ===== 6. TABLEAU DES LIGNES =====
+  // ===== 6. TABLEAU DES PRESTATIONS =====
   // En-têtes du tableau
   pdf.setFont('helvetica', 'bold')
   pdf.setFillColor(243, 244, 246)
   pdf.rect(20, yPosition - 5, 170, 6, 'F')
 
   pdf.setFontSize(9)
-  pdf.text('Description', 25, yPosition)
+  pdf.text('Désignation', 25, yPosition)
   pdf.text('Quantité', 100, yPosition)
   pdf.text('Prix unitaire', 125, yPosition)
   pdf.text('TVA %', 150, yPosition)
-  pdf.text('Total HT', 175, yPosition, { align: 'right' })
+  pdf.text('Montant HT', 175, yPosition, { align: 'right' })
 
   yPosition += 8
   pdf.setFont('helvetica', 'normal')
   pdf.setFontSize(9)
 
-  // Lignes de la facture
-  lignes.forEach((ligne: LigneFacture) => {
+  // Lignes du devis
+  lignes.forEach((ligne: LigneDevis) => {
     if (yPosition > 250) {
       pdf.addPage()
       yPosition = 20
@@ -269,38 +265,22 @@ async function generateFacturePDF({
   pdf.text('TOTAL TTC:', 135, yPosition)
   pdf.text(`${totals.totalTTC.toFixed(2)}€`, 185, yPosition, { align: 'right' })
 
-  // Montant payé et reste à payer (si applicable)
-  pdf.setTextColor(0, 0, 0)
-  pdf.setFont('helvetica', 'normal')
-  pdf.setFontSize(9)
-  yPosition += 10
-
-  if (factureData.montant_paye) {
-    pdf.text('Montant payé:', 130, yPosition)
-    pdf.text(`${factureData.montant_paye.toFixed(2)}€`, 185, yPosition, { align: 'right' })
-    yPosition += 5
-
-    const resteAPayer = totals.totalTTC - factureData.montant_paye
-    pdf.setTextColor(220, 38, 38)
-    pdf.text('Reste à payer:', 130, yPosition)
-    pdf.text(`${resteAPayer.toFixed(2)}€`, 185, yPosition, { align: 'right' })
-  }
-
-  // ===== 8. NOTES ET CONDITIONS =====
+  // ===== 8. CONDITIONS =====
   yPosition += 15
   pdf.setTextColor(0, 0, 0)
   pdf.setFont('helvetica', 'bold')
   pdf.setFontSize(9)
-  pdf.text('Conditions de paiement:', 20, yPosition)
+  pdf.text('Conditions du devis:', 20, yPosition)
 
   yPosition += 5
   pdf.setFont('helvetica', 'normal')
   pdf.setFontSize(8)
 
   const conditions = [
-    `Délai de paiement: ${entrepriseData?.conditions_paiement || 30} jours à compter de la facturation`,
+    'Validité du devis: 30 jours',
+    `Délai de paiement: ${entrepriseData?.conditions_paiement || 30} jours après signature`,
     'TVA non applicable (franchise de base)',
-    'Intérêts légaux en cas de non-paiement',
+    'Devis accepté par signature du client',
   ]
 
   conditions.forEach((condition) => {

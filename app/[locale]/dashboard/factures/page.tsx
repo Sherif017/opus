@@ -56,19 +56,25 @@ export default function FacturesPage() {
     }
   }
 
-  const refreshFactures = async () => {
+  const refreshFactures = async (token?: string) => {
     try {
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+      // ✅ Récupérer le token de la session si pas fourni
+      let accessToken = token
+      if (!accessToken) {
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession()
 
-      if (sessionError || !session?.access_token) {
-        console.error('No session found:', sessionError)
-        return
+        if (sessionError || !session?.access_token) {
+          console.error('No session found:', sessionError)
+          return
+        }
+        accessToken = session.access_token
       }
 
-      const response = await fetch('/api/factures/list', {
+      // ✅ Appeler la nouvelle API sécurisée avec le token
+      const response = await fetch('/api/dashboard/factures', {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
       })
@@ -91,7 +97,7 @@ export default function FacturesPage() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session?.access_token) return
 
-      const response = await fetch('/api/factures/list', {
+      const response = await fetch('/api/dashboard/factures', {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
@@ -99,336 +105,231 @@ export default function FacturesPage() {
         },
       })
 
-      if (response.ok) {
-        const data = await response.json()
-        setFactures(data.factures || [])
-      }
+      if (!response.ok) return
+
+      const data = await response.json()
+      setFactures(data.factures || [])
     } catch (error) {
-      console.error('Error refreshing:', error)
+      console.error('Error in background refresh:', error)
     }
   }
 
-  const getStatutColor = (statut: string) => {
-    const colors: Record<string, string> = {
-      brouillon: 'bg-gray-100 text-gray-700 border border-gray-200',
-      envoyée: 'bg-blue-100 text-blue-700 border border-blue-200',
-      payée: 'bg-green-100 text-green-700 border border-green-200',
-      impayée: 'bg-red-100 text-red-700 border border-red-200',
-      annulée: 'bg-yellow-100 text-yellow-700 border border-yellow-200',
-    }
-    return colors[statut] || 'bg-gray-100 text-gray-700'
-  }
-
-  const isEnvoyee = (statut: string) => {
-    return statut !== 'brouillon'
-  }
-
-  const isPayee = (statut: string) => {
-    return statut === 'payée'
-  }
-
-  const handleDownloadPDF = async (e: React.MouseEvent, facture: Facture) => {
-    e.preventDefault()
-    setDownloadingId(facture.id)
-
+  const handleDownload = async (factureId: string) => {
     try {
-      const response = await fetch('/api/generate-invoice-pdf', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          factureData: facture,
-          lignes: [],
-          clientData: { nom: facture.clients?.nom },
-          entrepriseData: { nom: 'OPUS' },
-        }),
-      })
-
+      setDownloadingId(factureId)
+      const response = await fetch(`/api/factures/generate-pdf?factureId=${factureId}`)
+      
       if (!response.ok) throw new Error('Erreur génération PDF')
-
+      
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `facture-${facture.numero_facture}.pdf`
-      document.body.appendChild(a)
+      a.download = `facture-${factureId}.pdf`
       a.click()
-      window.URL.revokeObjectURL(url)
-      document.body.removeChild(a)
     } catch (error) {
-      console.error('Error:', error)
+      console.error('Error downloading:', error)
       alert('Erreur lors du téléchargement')
     } finally {
       setDownloadingId(null)
     }
   }
 
-  const handleSendEmail = async (e: React.MouseEvent, facture: Facture) => {
-    e.preventDefault()
-
-    if (!facture.clients?.email) {
-      alert('Email du client non disponible')
+  const handleSendEmail = async (factureId: string, clientEmail?: string) => {
+    if (!clientEmail) {
+      alert('Email du client manquant')
       return
     }
 
-    setSendingId(facture.id)
-
     try {
+      setSendingId(factureId)
       const response = await fetch('/api/send-invoice-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          factureData: facture,
-          lignes: [],
-          clientEmail: facture.clients.email,
-          clientName: facture.clients.nom,
-          entrepriseData: { nom: 'OPUS' },
-        }),
+        body: JSON.stringify({ factureId, email: clientEmail }),
       })
 
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || 'Erreur envoi')
-
-      alert('Facture envoyée par email !')
+      if (!response.ok) throw new Error('Erreur envoi email')
+      
+      alert('Email envoyé avec succès')
     } catch (error) {
-      console.error('Error:', error)
-      alert('Erreur: ' + (error instanceof Error ? error.message : 'Unknown'))
+      console.error('Error sending:', error)
+      alert('Erreur lors de l\'envoi')
     } finally {
       setSendingId(null)
     }
   }
 
-  const handleDeleteFacture = async (e: React.MouseEvent, facture: Facture) => {
-    e.preventDefault()
+  const handleMarkAsPaid = async (factureId: string) => {
+    try {
+      setUpdatingId(factureId)
 
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) throw new Error('No session')
+
+      const response = await fetch(`/api/dashboard/factures/${factureId}`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          statut: 'payée',
+          date_paiement: new Date().toISOString(),
+        }),
+      })
+
+      if (!response.ok) throw new Error('Erreur mise à jour')
+
+      const { data } = await response.json()
+      setFactures(factures.map(f => f.id === factureId ? data : f))
+    } catch (error) {
+      console.error('Error updating:', error)
+      alert('Erreur lors de la mise à jour')
+    } finally {
+      setUpdatingId(null)
+    }
+  }
+
+  const handleDelete = async (factureId: string) => {
     if (!confirm('Êtes-vous sûr de vouloir supprimer cette facture ?')) return
 
     try {
-      const { error } = await supabase
-        .from('factures')
-        .delete()
-        .eq('id', facture.id)
+      setUpdatingId(factureId)
 
-      if (error) throw error
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) throw new Error('No session')
 
-      setFactures(factures.filter(f => f.id !== facture.id))
-      alert('Facture supprimée !')
+      const response = await fetch(`/api/dashboard/factures/${factureId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+      })
+
+      if (!response.ok) throw new Error('Erreur suppression')
+
+      setFactures(factures.filter(f => f.id !== factureId))
     } catch (error) {
-      console.error('Error:', error)
-      alert('Erreur: ' + (error instanceof Error ? error.message : 'Unknown'))
-    }
-  }
-
-  const handleToggleEnvoyee = async (e: React.MouseEvent, facture: Facture) => {
-    e.preventDefault()
-    setUpdatingId(facture.id)
-
-    try {
-      // Si brouillon → envoyée, sinon → brouillon
-      const newStatus = isEnvoyee(facture.statut) ? 'brouillon' : 'envoyée'
-
-      const { error } = await supabase
-        .from('factures')
-        .update({ statut: newStatus })
-        .eq('id', facture.id)
-
-      if (error) throw error
-
-      setFactures(factures.map(f => 
-        f.id === facture.id ? { ...f, statut: newStatus } : f
-      ))
-    } catch (error) {
-      console.error('Error:', error)
-      alert('Erreur: ' + (error instanceof Error ? error.message : 'Unknown'))
+      console.error('Error deleting:', error)
+      alert('Erreur lors de la suppression')
     } finally {
       setUpdatingId(null)
     }
   }
 
-  const handleTogglePayee = async (e: React.MouseEvent, facture: Facture) => {
-    e.preventDefault()
-    setUpdatingId(facture.id)
-
-    try {
-      // Si payée → impayée, sinon → payée
-      const newStatus = isPayee(facture.statut) ? 'impayée' : 'payée'
-
-      const { error } = await supabase
-        .from('factures')
-        .update({ statut: newStatus })
-        .eq('id', facture.id)
-
-      if (error) throw error
-
-      setFactures(factures.map(f => 
-        f.id === facture.id ? { ...f, statut: newStatus } : f
-      ))
-    } catch (error) {
-      console.error('Error:', error)
-      alert('Erreur: ' + (error instanceof Error ? error.message : 'Unknown'))
-    } finally {
-      setUpdatingId(null)
-    }
-  }
-
-  if (loading) return (
-    <div className="flex items-center justify-center h-96">
-      <div className="text-center">
-        <div className="w-12 h-12 rounded-full bg-blue-100 mx-auto mb-4 flex items-center justify-center">
-          <FileText className="w-6 h-6 text-blue-600" />
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Chargement des factures...</p>
         </div>
-        <p className="text-gray-700 font-semibold">Chargement des factures...</p>
       </div>
-    </div>
-  )
+    )
+  }
+
+  const totalAmount = factures.reduce((sum, f) => sum + (f.montant_total_ttc || 0), 0)
+  const totalPaid = factures.reduce((sum, f) => sum + (f.montant_paye || 0), 0)
+  const unpaidAmount = totalAmount - totalPaid
 
   return (
-    <div className="space-y-8 pb-8">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+    <div className="space-y-8 p-6">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-5xl font-bold bg-gradient-to-r from-blue-600 to-blue-700 bg-clip-text text-transparent mb-2">Factures</h1>
-          <p className="text-lg text-gray-600">{factures.length} factures en base</p>
+          <h1 className="text-4xl font-bold text-gray-900">Factures</h1>
+          <p className="text-gray-600 mt-2">{factures.length} factures</p>
         </div>
+        <Link href="/dashboard/factures/new">
+          <button className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            Nouvelle facture
+          </button>
+        </Link>
       </div>
 
-      {/* Liste des factures */}
-      {factures.length === 0 ? (
-        <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-200 rounded-3xl p-16 text-center shadow-lg">
-          <div className="w-20 h-20 bg-blue-200 rounded-full flex items-center justify-center mx-auto mb-6">
-            <FileText className="w-10 h-10 text-blue-600" />
-          </div>
-          <p className="text-gray-800 text-xl font-bold mb-2">Aucune facture trouvée</p>
-          <p className="text-gray-700">Les factures sont créées automatiquement à partir des devis acceptés</p>
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-4">
+        <Card className="p-6">
+          <p className="text-gray-600 text-sm">Total</p>
+          <p className="text-3xl font-bold text-gray-900 mt-2">{totalAmount.toLocaleString()}€</p>
         </Card>
-      ) : (
-        <div className="grid gap-4">
-          {factures.map((f, index) => (
-            <Link key={f.id} href={`/dashboard/factures/${f.id}`}>
-              <Card className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition-all cursor-pointer">
-                <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-6">
-                  {/* Infos principales */}
-                  <div className="flex-1">
-                    <div className="flex items-baseline gap-3 mb-4">
-                      <h3 className="text-2xl font-bold text-gray-900">Facture {index + 1}</h3>
-                      <p className="text-lg text-gray-700 font-semibold">{f.clients?.nom}</p>
-                    </div>
+        <Card className="p-6">
+          <p className="text-gray-600 text-sm">Payé</p>
+          <p className="text-3xl font-bold text-green-600 mt-2">{totalPaid.toLocaleString()}€</p>
+        </Card>
+        <Card className="p-6">
+          <p className="text-gray-600 text-sm">À encaisser</p>
+          <p className="text-3xl font-bold text-red-600 mt-2">{unpaidAmount.toLocaleString()}€</p>
+        </Card>
+      </div>
 
-                    <div className="space-y-2 text-sm">
-                      <p className="text-gray-600">
-                        <span className="font-semibold">N° :</span> <span className="font-mono text-gray-900">{f.numero_facture}</span>
-                      </p>
-                      <p className="text-gray-600">
-                        <span className="font-semibold">Montant TTC :</span> <span className="text-lg font-bold text-gray-900">{(f.montant_total_ttc || 0).toFixed(2)}€</span>
-                      </p>
-                      <p className="text-gray-600">
-                        <span className="font-semibold">Payé :</span> <span className="font-bold">{(f.montant_paye || 0).toFixed(2)}€</span>
-                      </p>
-                      <p className="text-gray-600">
-                        <span className="font-semibold">Reste :</span> <span className="font-bold text-orange-600">{((f.montant_total_ttc || 0) - (f.montant_paye || 0)).toFixed(2)}€</span>
-                      </p>
-                      <p className="text-gray-600">
-                        <span className="font-semibold">Date :</span> {new Date(f.date_creation).toLocaleDateString('fr-FR')}
-                      </p>
-                      {f.date_echeance && (
-                        <p className="text-gray-600">
-                          <span className="font-semibold">Échéance :</span> {new Date(f.date_echeance).toLocaleDateString('fr-FR')}
-                        </p>
-                      )}
-                      <p className="text-gray-600">
-                        <span className="font-semibold">Statut :</span> <span className={`inline-block px-2 py-1 rounded text-sm font-bold ${getStatutColor(f.statut)}`}>
-                          {f.statut}
-                        </span>
-                      </p>
+      {/* Factures list */}
+      <div className="grid gap-4">
+        {factures.length === 0 ? (
+          <div className="text-center py-12">
+            <p className="text-gray-500">Aucune facture créée</p>
+          </div>
+        ) : (
+          factures.map((f) => (
+            <div key={f.id} className="bg-white rounded-lg shadow p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex-1">
+                  <div className="flex items-center gap-4">
+                    <FileText className="w-5 h-5 text-blue-600" />
+                    <div>
+                      <h3 className="font-bold text-lg">{f.numero_facture}</h3>
+                      <p className="text-sm text-gray-600">{f.clients?.nom || 'Client inconnu'}</p>
                     </div>
                   </div>
-
-                  {/* Actions */}
-                  <div className="flex flex-col gap-3 w-full md:w-auto">
-                    {/* Toggles pour Envoyée et Payée */}
-                    <div className="flex gap-3 bg-gray-50 p-4 rounded-lg">
-                      {/* Toggle Envoyée */}
-                      <button
-                        onClick={(e) => handleToggleEnvoyee(e, f)}
-                        disabled={updatingId === f.id}
-                        className={`flex items-center gap-2 px-3 py-2 rounded font-semibold text-sm transition-all ${
-                          isEnvoyee(f.statut)
-                            ? 'bg-blue-200 text-blue-700 hover:bg-blue-300'
-                            : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
-                        }`}
-                        title={isEnvoyee(f.statut) ? 'Marquer comme non envoyée' : 'Marquer comme envoyée'}
-                      >
-                        <Send className="w-4 h-4" />
-                        Envoyée
-                        {isEnvoyee(f.statut) && <CheckCircle className="w-4 h-4" />}
-                      </button>
-
-                      {/* Toggle Payée */}
-                      <button
-                        onClick={(e) => handleTogglePayee(e, f)}
-                        disabled={updatingId === f.id}
-                        className={`flex items-center gap-2 px-3 py-2 rounded font-semibold text-sm transition-all ${
-                          isPayee(f.statut)
-                            ? 'bg-green-200 text-green-700 hover:bg-green-300'
-                            : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
-                        }`}
-                        title={isPayee(f.statut) ? 'Marquer comme impayée' : 'Marquer comme payée'}
-                      >
-                        <CheckCircle className="w-4 h-4" />
-                        Payée
-                        {isPayee(f.statut) && <CheckCircle className="w-4 h-4" />}
-                      </button>
-                    </div>
-
-                    {/* Autres boutons */}
-                    <div className="flex flex-wrap gap-2">
-                      {/* Bouton Télécharger PDF */}
-                      <button
-                        onClick={(e) => handleDownloadPDF(e, f)}
-                        disabled={downloadingId === f.id}
-                        className="flex-1 px-4 py-2 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded font-semibold text-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                      >
-                        <Download className="w-4 h-4" />
-                        PDF
-                      </button>
-
-                      {/* Bouton Envoyer Email */}
-                      <button
-                        onClick={(e) => handleSendEmail(e, f)}
-                        disabled={sendingId === f.id}
-                        className="flex-1 px-4 py-2 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded font-semibold text-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                      >
-                        <Mail className="w-4 h-4" />
-                        Email
-                      </button>
-
-                      {/* Bouton Modifier */}
-                      <button
-                        onClick={(e) => {
-                          e.preventDefault()
-                          // Redirection vers l'édition
-                        }}
-                        className="flex-1 px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded font-semibold text-sm transition-colors flex items-center justify-center gap-2"
-                      >
-                        <Edit2 className="w-4 h-4" />
-                        Modifier
-                      </button>
-
-                      {/* Bouton Supprimer */}
-                      <button
-                        onClick={(e) => handleDeleteFacture(e, f)}
-                        className="flex-1 px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded font-semibold text-sm transition-colors flex items-center justify-center gap-2"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                        Supprimer
-                      </button>
-                    </div>
+                  <div className="flex items-center gap-4 mt-3 text-sm">
+                    <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                      f.statut === 'payée' 
+                        ? 'bg-green-100 text-green-700' 
+                        : 'bg-yellow-100 text-yellow-700'
+                    }`}>
+                      {f.statut}
+                    </span>
+                    <span className="font-bold text-gray-900">{f.montant_total_ttc?.toLocaleString()}€</span>
+                    <span className="text-gray-600">{new Date(f.date_creation).toLocaleDateString('fr-FR')}</span>
                   </div>
                 </div>
-              </Card>
-            </Link>
-          ))}
-        </div>
-      )}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleDownload(f.id)}
+                    disabled={downloadingId === f.id}
+                    className="p-2 text-blue-600 hover:bg-blue-50 rounded disabled:opacity-50"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleSendEmail(f.id, f.clients?.email)}
+                    disabled={sendingId === f.id}
+                    className="p-2 text-green-600 hover:bg-green-50 rounded disabled:opacity-50"
+                  >
+                    <Mail className="w-4 h-4" />
+                  </button>
+                  {f.statut !== 'payée' && (
+                    <button
+                      onClick={() => handleMarkAsPaid(f.id)}
+                      disabled={updatingId === f.id}
+                      className="p-2 text-orange-600 hover:bg-orange-50 rounded disabled:opacity-50"
+                    >
+                      <CheckCircle className="w-4 h-4" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleDelete(f.id)}
+                    disabled={updatingId === f.id}
+                    className="p-2 text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
     </div>
   )
 }

@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
+import { supabase } from '@/lib/supabase-client'
+
 export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
 
 export async function POST(req: NextRequest) {
-    // ✅ Créer les clients DANS la fonction
-    const resend = new Resend(process.env.RESEND_API_KEY)
-
   try {
-    const { factureData, lignes, clientEmail, clientName, entrepriseData } = await req.json()
+    const { factureId, email } = await req.json()
 
-    if (!clientEmail || !factureData) {
+    if (!factureId || !email) {
       return NextResponse.json(
         { error: 'Données manquantes' },
         { status: 400 }
@@ -23,26 +23,74 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Importer Resend dynamiquement dans la fonction
-    const { Resend } = await import('resend')
-        // Générer le PDF
-    const pdfResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/generate-invoice-pdf`, {
+    const resend = new Resend(process.env.RESEND_API_KEY)
+
+    // ✅ Récupérer la facture avec toutes les données
+    const { data: facture, error: factureError } = await supabase
+      .from('factures')
+      .select(`
+        *,
+        clients(*),
+        entreprises(*)
+      `)
+      .eq('id', factureId)
+      .single()
+
+    if (factureError || !facture) {
+      console.error('Erreur récupération facture:', factureError)
+      return NextResponse.json(
+        { error: 'Facture non trouvée' },
+        { status: 404 }
+      )
+    }
+
+    // ✅ Générer le PDF avec la route améliorée
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    const pdfResponse = await fetch(`${appUrl}/api/factures/generate-pdf`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ factureData, lignes, clientData: { nom: clientName, email: clientEmail }, entrepriseData }),
+      body: JSON.stringify({
+        factureData: {
+          numero_facture: facture.numero_facture,
+          date_creation: facture.date_creation,
+          date_echeance: facture.date_echeance,
+          montant_total_ht: facture.montant_total_ht,
+          montant_tva: facture.montant_tva,
+          montant_total_ttc: facture.montant_total_ttc,
+          montant_paye: facture.montant_paye,
+        },
+        lignes: facture.lignes || [],
+        clientData: {
+          nom: facture.clients?.nom,
+          adresse: facture.clients?.adresse,
+          code_postal: facture.clients?.code_postal,
+          ville: facture.clients?.ville,
+          tva_number: facture.clients?.tva_number,
+        },
+        entrepriseData: facture.entreprises || {},
+      }),
     })
 
     if (!pdfResponse.ok) {
-      throw new Error('Erreur génération PDF')
+      console.error('Erreur génération PDF:', pdfResponse.status)
+      return NextResponse.json(
+        { error: 'Erreur génération PDF' },
+        { status: 500 }
+      )
     }
 
     const pdfBuffer = await pdfResponse.arrayBuffer()
 
-    // Envoyer l'email avec le PDF
+    // ✅ Calculer la date d'échéance
+    const dateEcheance = facture.date_echeance 
+      ? new Date(facture.date_echeance).toLocaleDateString('fr-FR')
+      : new Date().toLocaleDateString('fr-FR')
+
+    // ✅ Envoyer l'email avec Resend
     const result = await resend.emails.send({
-      from: process.env.SENDER_EMAIL || 'noreply@opus.boutique',
-      to: clientEmail,
-      subject: `Facture ${factureData.numero_facture}`,
+      from: process.env.RESEND_FROM_EMAIL || 'noreply@opus.boutique',
+      to: email,
+      subject: `Facture ${facture.numero_facture}`,
       html: `
         <!DOCTYPE html>
         <html>
@@ -56,6 +104,7 @@ export async function POST(req: NextRequest) {
             .details { margin: 20px 0; background-color: white; padding: 15px; border-radius: 5px; }
             .total { font-size: 18px; font-weight: bold; color: #3b82f6; margin: 15px 0; }
             .footer { text-align: center; padding: 20px; color: #999; font-size: 12px; }
+            .warning { background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px; margin: 15px 0; }
           </style>
         </head>
         <body>
@@ -64,22 +113,25 @@ export async function POST(req: NextRequest) {
               <h1>Votre Facture OPUS</h1>
             </div>
             <div class="content">
-              <p>Bonjour <strong>${clientName}</strong>,</p>
+              <p>Bonjour <strong>${facture.clients?.nom}</strong>,</p>
               
               <p>Veuillez trouver ci-joint votre facture.</p>
               
               <div class="details">
-                <p><strong>Numéro de facture:</strong> ${factureData.numero_facture}</p>
-                <p><strong>Date:</strong> ${new Date(factureData.date_creation).toLocaleDateString('fr-FR')}</p>
+                <p><strong>Numéro de facture:</strong> ${facture.numero_facture}</p>
+                <p><strong>Date:</strong> ${new Date(facture.date_creation).toLocaleDateString('fr-FR')}</p>
+                <p><strong>Date d'échéance:</strong> ${dateEcheance}</p>
               </div>
 
               <div class="details">
-                <p><strong>Montant HT:</strong> ${factureData.montant_total_ht.toFixed(2)}€</p>
-                <p><strong>TVA:</strong> ${factureData.montant_tva.toFixed(2)}€</p>
-                <div class="total">Total TTC: ${factureData.montant_total_ttc.toFixed(2)}€</div>
+                <p><strong>Montant HT:</strong> ${facture.montant_total_ht.toFixed(2)}€</p>
+                <p><strong>TVA:</strong> ${facture.montant_tva.toFixed(2)}€</p>
+                <div class="total">Total TTC: ${facture.montant_total_ttc.toFixed(2)}€</div>
               </div>
 
-              <p>Conditions de paiement: 30 jours à compter de la date de facturation.</p>
+              <div class="warning">
+                <p><strong>Conditions de paiement:</strong> 30 jours à compter de la date de facturation.</p>
+              </div>
               
               <p>N'hésitez pas à nous contacter si vous avez des questions.</p>
               
@@ -94,17 +146,22 @@ export async function POST(req: NextRequest) {
       `,
       attachments: [
         {
-          filename: `facture-${factureData.numero_facture}.pdf`,
+          filename: `facture-${facture.numero_facture}.pdf`,
           content: Buffer.from(pdfBuffer),
         },
       ],
     })
 
     if (result.error) {
+      console.error('Erreur Resend:', result.error)
       throw new Error(result.error.message)
     }
 
-    return NextResponse.json({ success: true, messageId: result.data?.id })
+    return NextResponse.json({ 
+      success: true, 
+      messageId: result.data?.id,
+      message: 'Email envoyé avec succès'
+    })
   } catch (error) {
     console.error('Email Error:', error)
     return NextResponse.json(
