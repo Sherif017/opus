@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ArrowLeft, Save, Loader } from 'lucide-react'
 import { supabase } from '@/lib/supabase-client'
+import type { Session } from '@supabase/supabase-js'
 
 interface UserData {
   user: {
@@ -55,7 +56,7 @@ export default function SettingsPage() {
           
           // Écoute les changements d'auth
           const { data: { subscription } } = supabase.auth.onAuthStateChange(
-            async (_event, newSession) => {
+            async (_event: string, newSession: Session | null) => {
               console.log('🔄 Auth event:', _event, 'User:', newSession?.user?.email)
 
               if (!isMounted) return
