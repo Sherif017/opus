@@ -3,9 +3,9 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase-client'
 import { Card } from '@/components/ui/Card'
-import { Button } from '@/components/ui/Button'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { FileText, ArrowLeft } from 'lucide-react'
+import { FileText, ArrowLeft, ChevronRight, Download, Mail, RefreshCw } from 'lucide-react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 
 interface Client {
   id: string
@@ -13,303 +13,252 @@ interface Client {
   email?: string
 }
 
-interface LigneDevis {
-  id: string
-  description: string
-  quantite: number
-  prix_unitaire: number
-  taux_tva: number
-}
-
 interface Devis {
   id: string
   numero_devis: string
   client_id: string
   statut: string
+  montant_total_ht?: number
+  montant_tva?: number
+  montant_total_ttc?: number
+  date_creation: string
   clients?: Client
 }
 
-export default function NewFacturePage() {
+export default function SelectDevisForFacturePage() {
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const devisId = searchParams.get('devis_id')
-
-  const [devis, setDevis] = useState<Devis | null>(null)
-  const [lignes, setLignes] = useState<LigneDevis[]>([])
+  const [devis, setDevis] = useState<Devis[]>([])
   const [loading, setLoading] = useState(true)
-  const [creating, setCreating] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState<string | null>(null)
+  const [sending, setSending] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
 
   useEffect(() => {
-    if (!devisId) {
-      setError('Aucun devis sélectionné')
-      setLoading(false)
-      return
-    }
-    loadDevis()
-  }, [devisId])
+    init()
+  }, [])
 
-  const loadDevis = async () => {
+  const init = async () => {
     try {
       setLoading(true)
-      setError(null)
-
-      // ✅ Récupérer le devis
-      const { data: devisData, error: devisError } = await supabase
-        .from('devis')
-        .select('*, clients(id, nom, email)')
-        .eq('id', devisId)
-        .single()
-
-      if (devisError || !devisData) {
-        setError('Devis non trouvé')
+      
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      if (!session) {
+        console.error('❌ No session found during init')
+        setLoading(false)
         return
       }
 
-      setDevis(devisData as Devis)
-
-      // ✅ Récupérer les lignes du devis
-      const { data: lignesData, error: lignesError } = await supabase
-        .from('devis_lignes')
-        .select('*')
-        .eq('devis_id', devisId)
-
-      if (lignesError) {
-        setError('Erreur lors du chargement des lignes')
-        return
-      }
-
-      setLignes(lignesData || [])
-    } catch (err) {
-      console.error('Error:', err)
-      setError('Erreur lors du chargement du devis')
-    } finally {
+      await refreshDevis(session.access_token)
+    } catch (error) {
+      console.error('Error in init:', error)
       setLoading(false)
     }
   }
 
-  const calculateTotal = () => {
-    let totalHT = 0
-    let totalTVA = 0
+  const refreshDevis = async (token?: string) => {
+    try {
+      let accessToken = token
+      if (!accessToken) {
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession()
 
-    lignes.forEach(ligne => {
-      const sousTotal = ligne.quantite * ligne.prix_unitaire
-      totalHT += sousTotal
-      totalTVA += sousTotal * (ligne.taux_tva / 100)
-    })
+        if (sessionError || !session?.access_token) {
+          console.warn('⚠️  Session not ready yet')
+          return
+        }
+        accessToken = session.access_token
+      }
 
-    return { totalHT, totalTVA, totalTTC: totalHT + totalTVA }
+      const response = await fetch('/api/dashboard/devis', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        console.error('❌ API Error:', error)
+        return
+      }
+
+      const data = await response.json()
+      // ✅ Filtrer les devis acceptés ou non facturés
+      const availableDevis = (data.devis || []).filter((d: Devis) => 
+        d.statut === 'accepté' || d.statut === 'en attente'
+      )
+      setDevis(availableDevis)
+    } catch (error) {
+      console.error('Error refreshing devis:', error)
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
+    }
   }
 
-  const handleCreateFacture = async () => {
-    if (!devis || lignes.length === 0) {
-      alert('Données incomplètes')
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    await refreshDevis()
+  }
+
+  const handleDownload = async (devisId: string) => {
+    try {
+      setDownloading(devisId)
+      const response = await fetch(`/api/devis/generate-pdf?devisId=${devisId}`)
+      
+      if (!response.ok) throw new Error('Erreur génération PDF')
+      
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `devis-${devisId}.pdf`
+      a.click()
+    } catch (error) {
+      console.error('Error downloading:', error)
+      alert('Erreur lors du téléchargement')
+    } finally {
+      setDownloading(null)
+    }
+  }
+
+  const handleSendEmail = async (devisId: string, clientEmail?: string) => {
+    if (!clientEmail) {
+      alert('Email du client manquant')
       return
     }
 
-    setCreating(true)
-
     try {
-      // ✅ Récupérer le token
-      const { data: { session } } = await supabase.auth.getSession()
-
-      if (!session?.access_token) {
-        setError('Pas de session active')
-        return
-      }
-
-      // ✅ Appeler l'API sécurisée
-      const response = await fetch('/api/factures/create', {
+      setSending(devisId)
+      const response = await fetch('/api/send-devis-email', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          devis_id: devis.id,
-          lignes: lignes,
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ devisId, email: clientEmail }),
       })
 
-      const data = await response.json()
-
-      if (!response.ok) {
-        setError(data.error || 'Erreur lors de la création')
-        return
-      }
-
-      console.log('✅ Facture créée:', data.facture)
-      alert('Facture créée avec succès !')
-
-      // ✅ Rediriger vers la page factures
-      setTimeout(() => {
-        router.push('/dashboard/factures')
-      }, 500)
-    } catch (err) {
-      console.error('Error:', err)
-      setError(err instanceof Error ? err.message : 'Erreur inconnue')
+      if (!response.ok) throw new Error('Erreur envoi email')
+      
+      alert('Email envoyé avec succès')
+    } catch (error) {
+      console.error('Error sending:', error)
+      alert('Erreur lors de l\'envoi')
     } finally {
-      setCreating(false)
+      setSending(null)
     }
   }
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-96">
+      <div className="flex items-center justify-center h-screen">
         <div className="text-center">
-          <div className="w-12 h-12 rounded-full bg-blue-100 mx-auto mb-4 flex items-center justify-center">
-            <FileText className="w-6 h-6 text-blue-600" />
-          </div>
-          <p className="text-gray-700 font-semibold">Chargement du devis...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Chargement des devis...</p>
         </div>
       </div>
     )
   }
 
-  if (error) {
-    return (
-      <div className="max-w-2xl mx-auto p-6">
-        <button
-          onClick={() => router.back()}
-          className="flex items-center gap-2 text-blue-600 hover:text-blue-700 mb-6 font-semibold"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Retour
-        </button>
-        <Card className="bg-red-50 border border-red-200 p-6 text-center">
-          <p className="text-red-700 font-semibold">{error}</p>
-        </Card>
-      </div>
-    )
-  }
-
-  if (!devis) {
-    return (
-      <div className="max-w-2xl mx-auto p-6">
-        <button
-          onClick={() => router.back()}
-          className="flex items-center gap-2 text-blue-600 hover:text-blue-700 mb-6 font-semibold"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Retour
-        </button>
-        <Card className="bg-yellow-50 border border-yellow-200 p-6 text-center">
-          <p className="text-yellow-700 font-semibold">Aucun devis sélectionné</p>
-        </Card>
-      </div>
-    )
-  }
-
-  const { totalHT, totalTVA, totalTTC } = calculateTotal()
+  const totalAmount = devis.reduce((sum, d) => sum + (d.montant_total_ttc || 0), 0)
 
   return (
-    <div className="max-w-4xl mx-auto p-6">
-      <button
-        onClick={() => router.back()}
-        className="flex items-center gap-2 text-blue-600 hover:text-blue-700 mb-6 font-semibold"
-      >
-        <ArrowLeft className="w-4 h-4" />
-        Retour
-      </button>
-
-      <h1 className="text-3xl font-bold mb-2">Créer Facture</h1>
-      <p className="text-gray-600 mb-6">À partir du devis {devis.numero_devis}</p>
-
-      {/* Infos Devis */}
-      <Card className="mb-6">
-        <h2 className="font-bold mb-4 text-lg">Informations du Devis</h2>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <p className="text-sm text-gray-600">Devis</p>
-            <p className="font-semibold">{devis.numero_devis}</p>
-          </div>
-          <div>
-            <p className="text-sm text-gray-600">Client</p>
-            <p className="font-semibold">{devis.clients?.nom}</p>
-          </div>
-          <div>
-            <p className="text-sm text-gray-600">Email</p>
-            <p className="font-semibold">{devis.clients?.email || 'Non disponible'}</p>
-          </div>
-          <div>
-            <p className="text-sm text-gray-600">Statut</p>
-            <span className="inline-block px-3 py-1 bg-blue-100 text-blue-700 rounded font-semibold text-sm">
-              {devis.statut}
-            </span>
-          </div>
+    <div className="space-y-8 p-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <button
+            onClick={() => router.back()}
+            className="flex items-center gap-2 text-blue-600 hover:text-blue-700 mb-4 font-semibold"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Retour
+          </button>
+          <h1 className="text-4xl font-bold text-gray-900">Créer une Facture</h1>
+          <p className="text-gray-600 mt-2">Sélectionnez un devis à facturer</p>
         </div>
-      </Card>
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50"
+        >
+          <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+          {refreshing ? 'Rafraîchissement...' : 'Rafraîchir'}
+        </button>
+      </div>
 
-      {/* Lignes */}
-      <Card className="mb-6">
-        <h2 className="font-bold mb-4 text-lg">Lignes de Facture</h2>
+      {/* Stats */}
+      {devis.length > 0 && (
+        <Card className="p-6 bg-blue-50">
+          <p className="text-gray-600 text-sm">Devis disponibles</p>
+          <p className="text-3xl font-bold text-blue-600 mt-2">{devis.length} devis • {totalAmount.toLocaleString()}€</p>
+        </Card>
+      )}
 
-        {lignes.length === 0 ? (
-          <p className="text-gray-600 text-center py-8">Aucune ligne de devis</p>
+      {/* Liste des devis */}
+      <div className="grid gap-4">
+        {devis.length === 0 ? (
+          <Card className="p-12 text-center">
+            <FileText className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+            <p className="text-gray-500 text-lg font-semibold">Aucun devis disponible</p>
+            <p className="text-gray-400 text-sm mt-2">Créez un devis accepté pour pouvoir créer une facture</p>
+            <Link href="/dashboard/devis">
+              <button className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                Aller aux devis
+              </button>
+            </Link>
+          </Card>
         ) : (
-          <div className="space-y-3">
-            {lignes.map((ligne, index) => (
-              <div key={ligne.id} className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-3 text-sm">
-                  <div className="md:col-span-2">
-                    <p className="text-gray-600 text-xs mb-1 font-semibold">Description</p>
-                    <p className="font-medium">{ligne.description}</p>
+          devis.map((d) => (
+            <Card key={d.id} className="p-6 hover:shadow-lg transition-shadow">
+              <div className="flex items-center justify-between">
+                <div className="flex-1">
+                  <div className="flex items-center gap-4 mb-3">
+                    <FileText className="w-5 h-5 text-blue-600" />
+                    <div>
+                      <h3 className="font-bold text-lg text-gray-900">{d.numero_devis}</h3>
+                      <p className="text-sm text-gray-600">{d.clients?.nom || 'Client inconnu'}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-gray-600 text-xs mb-1 font-semibold">Quantité</p>
-                    <p className="font-medium">{ligne.quantite}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-600 text-xs mb-1 font-semibold">Prix unitaire</p>
-                    <p className="font-medium">{ligne.prix_unitaire.toFixed(2)}€</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-600 text-xs mb-1 font-semibold">TVA</p>
-                    <p className="font-medium">{ligne.taux_tva}%</p>
+                  <div className="flex items-center gap-4 text-sm">
+                    <span className={`px-3 py-1 rounded text-xs font-semibold ${
+                      d.statut === 'accepté' 
+                        ? 'bg-green-100 text-green-700' 
+                        : 'bg-yellow-100 text-yellow-700'
+                    }`}>
+                      {d.statut}
+                    </span>
+                    <span className="font-bold text-gray-900">{d.montant_total_ttc?.toLocaleString()}€</span>
+                    <span className="text-gray-600">{new Date(d.date_creation).toLocaleDateString('fr-FR')}</span>
                   </div>
                 </div>
-                <div className="mt-2 pt-2 border-t border-gray-300">
-                  <p className="text-right text-gray-700 font-semibold">
-                    Sous-total: {(ligne.quantite * ligne.prix_unitaire).toFixed(2)}€
-                  </p>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleDownload(d.id)}
+                    disabled={downloading === d.id}
+                    className="p-2 text-blue-600 hover:bg-blue-50 rounded disabled:opacity-50"
+                    title="Télécharger le PDF"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleSendEmail(d.id, d.clients?.email)}
+                    disabled={sending === d.id}
+                    className="p-2 text-green-600 hover:bg-green-50 rounded disabled:opacity-50"
+                    title="Envoyer par email"
+                  >
+                    <Mail className="w-4 h-4" />
+                  </button>
+                  <Link href={`/dashboard/factures/new/${d.id}`}>
+                    <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold">
+                      Facturer
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </Link>
                 </div>
               </div>
-            ))}
-          </div>
+            </Card>
+          ))
         )}
-      </Card>
-
-      {/* Totaux */}
-      <Card className="mb-6 bg-gray-50">
-        <div className="space-y-3 text-right">
-          <div className="flex justify-between">
-            <span>Montant HT:</span>
-            <span className="font-bold">{totalHT.toFixed(2)}€</span>
-          </div>
-          <div className="flex justify-between">
-            <span>TVA:</span>
-            <span className="font-bold">{totalTVA.toFixed(2)}€</span>
-          </div>
-          <div className="flex justify-between text-lg border-t pt-3">
-            <span>Total TTC:</span>
-            <span className="font-bold text-green-600">{totalTTC.toFixed(2)}€</span>
-          </div>
-        </div>
-      </Card>
-
-      {/* Boutons */}
-      <div className="flex gap-2">
-        <Button
-          onClick={handleCreateFacture}
-          variant="primary"
-          disabled={creating || lignes.length === 0}
-          className="flex-1"
-        >
-          {creating ? 'Création...' : 'Créer Facture'}
-        </Button>
-        <Button onClick={() => router.back()} variant="secondary">
-          Annuler
-        </Button>
       </div>
     </div>
   )

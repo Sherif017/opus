@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Resend } from 'resend'
-import { supabase } from '@/lib/supabase-client'
+import { createClient } from '@supabase/supabase-js'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -23,6 +23,12 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // ✅ Créer un client Supabase serveur
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
+
     const resend = new Resend(process.env.RESEND_API_KEY)
 
     // ✅ Récupérer la facture avec toutes les données
@@ -44,6 +50,12 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // ✅ Récupérer les lignes de la facture
+    const { data: lignes } = await supabase
+      .from('factures_lignes')
+      .select('*')
+      .eq('facture_id', factureId)
+
     // ✅ Générer le PDF avec la route améliorée
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
     const pdfResponse = await fetch(`${appUrl}/api/factures/generate-pdf`, {
@@ -59,7 +71,7 @@ export async function POST(req: NextRequest) {
           montant_total_ttc: facture.montant_total_ttc,
           montant_paye: facture.montant_paye,
         },
-        lignes: facture.lignes || [],
+        lignes: lignes || [],
         clientData: {
           nom: facture.clients?.nom,
           adresse: facture.clients?.adresse,
@@ -79,12 +91,13 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const pdfBuffer = await pdfResponse.arrayBuffer()
+    // ✅ Récupérer le PDF en buffer et le convertir en base64
+    const pdfArrayBuffer = await pdfResponse.arrayBuffer()
+    const pdfBuffer = Buffer.from(pdfArrayBuffer)
+    const pdfBase64 = pdfBuffer.toString('base64')
 
-    // ✅ Calculer la date d'échéance
-    const dateEcheance = facture.date_echeance 
-      ? new Date(facture.date_echeance).toLocaleDateString('fr-FR')
-      : new Date().toLocaleDateString('fr-FR')
+    console.log('✅ PDF généré, taille:', pdfArrayBuffer.byteLength, 'bytes')
+    console.log('✅ Base64 taille:', pdfBase64.length, 'characters')
 
     // ✅ Envoyer l'email avec Resend
     const result = await resend.emails.send({
@@ -92,19 +105,17 @@ export async function POST(req: NextRequest) {
       to: email,
       subject: `Facture ${facture.numero_facture}`,
       html: `
-        <!DOCTYPE html>
         <html>
         <head>
           <meta charset="utf-8">
           <style>
             body { font-family: Arial, sans-serif; color: #333; }
             .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background-color: #3b82f6; color: white; padding: 20px; border-radius: 8px 8px 0 0; }
+            .header { background-color: #10b981; color: white; padding: 20px; border-radius: 8px 8px 0 0; }
             .content { background-color: #f9fafb; padding: 20px; border-radius: 0 0 8px 8px; }
             .details { margin: 20px 0; background-color: white; padding: 15px; border-radius: 5px; }
-            .total { font-size: 18px; font-weight: bold; color: #3b82f6; margin: 15px 0; }
+            .total { font-size: 18px; font-weight: bold; color: #10b981; margin: 15px 0; }
             .footer { text-align: center; padding: 20px; color: #999; font-size: 12px; }
-            .warning { background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 12px; margin: 15px 0; }
           </style>
         </head>
         <body>
@@ -115,12 +126,11 @@ export async function POST(req: NextRequest) {
             <div class="content">
               <p>Bonjour <strong>${facture.clients?.nom}</strong>,</p>
               
-              <p>Veuillez trouver ci-joint votre facture.</p>
+              <p>Merci pour votre confiance. Veuillez trouver ci-joint votre facture détaillée.</p>
               
               <div class="details">
-                <p><strong>Numéro de facture:</strong> ${facture.numero_facture}</p>
+                <p><strong>Numéro:</strong> ${facture.numero_facture}</p>
                 <p><strong>Date:</strong> ${new Date(facture.date_creation).toLocaleDateString('fr-FR')}</p>
-                <p><strong>Date d'échéance:</strong> ${dateEcheance}</p>
               </div>
 
               <div class="details">
@@ -129,9 +139,7 @@ export async function POST(req: NextRequest) {
                 <div class="total">Total TTC: ${facture.montant_total_ttc.toFixed(2)}€</div>
               </div>
 
-              <div class="warning">
-                <p><strong>Conditions de paiement:</strong> 30 jours à compter de la date de facturation.</p>
-              </div>
+              <p>Veuillez effectuer le paiement selon les conditions convenues.</p>
               
               <p>N'hésitez pas à nous contacter si vous avez des questions.</p>
               
@@ -147,7 +155,7 @@ export async function POST(req: NextRequest) {
       attachments: [
         {
           filename: `facture-${facture.numero_facture}.pdf`,
-          content: Buffer.from(pdfBuffer),
+          content: pdfBase64,
         },
       ],
     })

@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Mail, Lock, User, Building2, Eye, EyeOff, Check } from 'lucide-react'
+import { Mail, Lock, User, Building2, Eye, EyeOff, Check, X } from 'lucide-react'
 import Link from 'next/link'
 
 export default function SignupPage() {
@@ -10,6 +10,8 @@ export default function SignupPage() {
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [showModal, setShowModal] = useState(false)
+  const [submittedEmail, setSubmittedEmail] = useState('')
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -98,7 +100,9 @@ export default function SignupPage() {
         return
       }
 
-      router.push('/auth/verify-email?email=' + encodeURIComponent(formData.email))
+      // Afficher le modal
+      setSubmittedEmail(formData.email)
+      setShowModal(true)
     } catch (error) {
       setErrors({
         submit: 'Erreur réseau. Vérifiez votre connexion.',
@@ -325,6 +329,85 @@ export default function SignupPage() {
           </div>
         </div>
       </div>
+
+      {/* Modal de confirmation */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 rounded-xl sm:rounded-2xl p-6 sm:p-8 max-w-md w-full shadow-2xl">
+            {/* Close button */}
+            <button
+              onClick={() => setShowModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* Icon */}
+            <div className="mb-6 flex justify-center">
+              <div className="w-16 h-16 rounded-full bg-blue-500/20 border border-blue-500/50 flex items-center justify-center">
+                <Mail className="w-8 h-8 text-blue-400" />
+              </div>
+            </div>
+
+            {/* Content */}
+            <h2 className="text-2xl sm:text-3xl font-bold text-center mb-3">Vérifiez votre email</h2>
+            
+            <p className="text-slate-300 text-center text-sm sm:text-base mb-6">
+              Un email de confirmation a été envoyé à:
+            </p>
+
+            {/* Email display */}
+            <div className="bg-slate-900/50 border border-slate-700 rounded-lg p-4 mb-6">
+              <p className="text-white font-semibold text-center break-all">{submittedEmail}</p>
+            </div>
+
+            {/* Instructions */}
+            <div className="space-y-3 mb-8 text-sm">
+              <div className="flex gap-3">
+                <div className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/20 border border-blue-500/50 flex items-center justify-center text-blue-400 text-sm font-bold">
+                  1
+                </div>
+                <p className="text-slate-300 pt-0.5">Vérifiez votre boîte de réception (et dossier indésirables)</p>
+              </div>
+              <div className="flex gap-3">
+                <div className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/20 border border-blue-500/50 flex items-center justify-center text-blue-400 text-sm font-bold">
+                  2
+                </div>
+                <p className="text-slate-300 pt-0.5">Cliquez sur le lien dans l'email</p>
+              </div>
+              <div className="flex gap-3">
+                <div className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/20 border border-blue-500/50 flex items-center justify-center text-blue-400 text-sm font-bold">
+                  3
+                </div>
+                <p className="text-slate-300 pt-0.5">Commencez à utiliser Opus</p>
+              </div>
+            </div>
+
+            {/* Warning */}
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 sm:p-4 mb-6">
+              <p className="text-amber-300 text-xs sm:text-sm">
+                ⏱️ Le lien expire dans <strong>24 heures</strong>
+              </p>
+            </div>
+
+            {/* Buttons */}
+            <div className="space-y-3">
+              <Link
+                href={`/auth/verify-email?email=${encodeURIComponent(submittedEmail)}`}
+                className="w-full py-2.5 sm:py-3 rounded-lg font-semibold bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 transition-all text-white text-center block text-sm sm:text-base"
+              >
+                Aller vérifier mon email
+              </Link>
+              <button
+                onClick={() => setShowModal(false)}
+                className="w-full py-2.5 sm:py-3 rounded-lg font-semibold bg-slate-700 hover:bg-slate-600 transition-all text-white text-sm sm:text-base"
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

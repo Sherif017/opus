@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase-client'
 import { Card } from '@/components/ui/Card'
-import { GripVertical, Plus, Calendar, DollarSign, Mail, Phone, Loader } from 'lucide-react'
+import { GripVertical, Plus, Calendar, DollarSign, Mail, Phone, Loader, RefreshCw } from 'lucide-react'
 
 interface Prospect {
   id: string
@@ -22,6 +22,7 @@ interface PipelineColumn {
   id: string
   titre: string
   couleur: string
+  borderColor: string
   icon: string
   prospects: Prospect[]
 }
@@ -37,71 +38,101 @@ const PIPELINE_STATUTS = [
 export default function PipelineKanbanPage() {
   const [columns, setColumns] = useState<PipelineColumn[]>([])
   const [loading, setLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [draggedCard, setDraggedCard] = useState<string | null>(null)
-  const [enterpriseId, setEnterpriseId] = useState<string>('')
   const [savingId, setSavingId] = useState<string | null>(null)
 
-  // Charger les prospects au montage
-  useEffect(() => {
-    loadProspects()
-  }, [])
+  // Récupérer le token de l'utilisateur connecté
+  const getAuthToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession()
+    return session?.access_token
+  }
 
-  const loadProspects = useCallback(async () => {
+  // Charger les prospects depuis l'API (silencieusement)
+  const loadProspectsBackground = async () => {
     try {
-      setLoading(true)
+      const token = await getAuthToken()
 
-      // Récupérer l'entreprise ID
-      const { data: userData } = await supabase
-        .from('utilisateurs')
-        .select('entreprise_id')
-        .limit(1)
-        .single()
-
-      if (!userData) {
-        console.error('Utilisateur non trouvé')
+      if (!token) {
+        console.error('Pas de token')
         return
       }
 
-      setEnterpriseId(userData.entreprise_id)
-
-      // Charger tous les prospects
-      const { data: prospects, error } = await supabase
-        .from('prospects')
-        .select('*')
-        .eq('entreprise_id', userData.entreprise_id)
-        .order('dernier_contact', { ascending: false })
-
-      if (error) throw error
-
-      // Organiser par colonne
-      const columnMap: { [key: string]: PipelineColumn } = {}
-      PIPELINE_STATUTS.forEach(status => {
-        columnMap[status.id] = {
-          id: status.id,
-          titre: status.titre,
-          couleur: status.couleur,
-          icon: status.icon,
-          prospects: []
-        }
+      const response = await fetch('/api/dashboard/pipeline/prospects', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
       })
 
-      // Ajouter les prospects aux colonnes
-      prospects?.forEach((prospect: Prospect) => {
-        const status = prospect.statut_pipeline || 'nouveau'
-        if (columnMap[status]) {
-          columnMap[status].prospects.push(prospect)
-        } else {
-          // Si le statut n'existe pas, le mettre dans "Nouveau"
-          columnMap['nouveau'].prospects.push(prospect)
-        }
-      })
+      if (!response.ok) {
+        throw new Error('Erreur lors du chargement des prospects')
+      }
 
-      setColumns(Object.values(columnMap))
+      const data = await response.json()
+      updateColumns(data.prospects)
     } catch (error) {
       console.error('Error loading prospects:', error)
+    }
+  }
+
+  // Charger les prospects au montage (avec loading)
+  const loadProspects = async () => {
+    try {
+      setLoading(true)
+      await loadProspectsBackground()
     } finally {
       setLoading(false)
     }
+  }
+
+  // Mettre à jour les colonnes
+  const updateColumns = (prospects: Prospect[]) => {
+    const columnMap: { [key: string]: PipelineColumn } = {}
+    PIPELINE_STATUTS.forEach(status => {
+      columnMap[status.id] = {
+        id: status.id,
+        titre: status.titre,
+        couleur: status.couleur,
+        borderColor: status.borderColor,
+        icon: status.icon,
+        prospects: []
+      }
+    })
+
+    // Ajouter les prospects aux colonnes
+    prospects?.forEach((prospect: Prospect) => {
+      const status = prospect.statut_pipeline || 'nouveau'
+      if (columnMap[status]) {
+        columnMap[status].prospects.push(prospect)
+      } else {
+        // Si le statut n'existe pas, le mettre dans "Nouveau"
+        columnMap['nouveau'].prospects.push(prospect)
+      }
+    })
+
+    setColumns(Object.values(columnMap))
+  }
+
+  // Rafraîchir manuellement (visible)
+  const refreshProspects = async () => {
+    try {
+      setIsRefreshing(true)
+      await loadProspectsBackground()
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
+
+  // Charger au montage et refresh silencieux chaque 10 secondes
+  useEffect(() => {
+    loadProspects()
+
+    // Rafraîchir silencieusement chaque 10 secondes
+    const interval = setInterval(() => {
+      loadProspectsBackground()
+    }, 10000)
+
+    return () => clearInterval(interval)
   }, [])
 
   const handleDragStart = (e: React.DragEvent, prospectId: string) => {
@@ -139,14 +170,26 @@ export default function PipelineKanbanPage() {
     setSavingId(draggedCard)
 
     try {
-      // Mettre à jour en base de données
-      const { error } = await supabase
-        .from('prospects')
-        .update({ statut_pipeline: targetColumnId })
-        .eq('id', draggedCard)
-        .eq('entreprise_id', enterpriseId)
+      const token = await getAuthToken()
 
-      if (error) throw error
+      if (!token) {
+        throw new Error('Pas de token')
+      }
+
+      // Mettre à jour via l'API
+      const response = await fetch('/api/dashboard/pipeline/prospects', {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          prospectId: draggedCard,
+          statut_pipeline: targetColumnId,
+        }),
+      })
+
+      if (!response.ok) throw new Error('Erreur lors de la mise à jour')
 
       // Mettre à jour l'interface
       const newColumns = columns.map(col => {
@@ -190,9 +233,21 @@ export default function PipelineKanbanPage() {
 
   return (
     <div className="p-8 max-w-full mx-auto">
-      <div className="mb-8">
-        <h1 className="text-4xl font-bold text-gray-900 mb-2">Pipeline de Vente</h1>
-        <p className="text-gray-600">Gérez vos prospects avec drag & drop • {totalProspects} prospects • Valeur totale : {totalValue.toLocaleString()}€</p>
+      {/* Header avec bouton refresh */}
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h1 className="text-4xl font-bold text-gray-900 mb-2">Pipeline de Vente</h1>
+          <p className="text-gray-600">Gérez vos prospects avec drag & drop • {totalProspects} prospects • Valeur totale : {totalValue.toLocaleString()}€</p>
+        </div>
+        <button
+          onClick={refreshProspects}
+          disabled={isRefreshing}
+          className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50 transition-all"
+          title="Rafraîchir manuellement"
+        >
+          <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+          {isRefreshing ? 'Rafraîchissement...' : 'Rafraîchir'}
+        </button>
       </div>
 
       {/* Stats du Pipeline */}
@@ -339,9 +394,10 @@ export default function PipelineKanbanPage() {
         <h3 className="font-bold text-lg mb-4">💡 Tips d'Utilisation</h3>
         <ul className="space-y-2 text-sm text-gray-700">
           <li>✅ Cliquez et glissez les cartes pour changer le statut du prospect</li>
-          <li>✅ Les changements sont sauvegardés automatiquement en base de données</li>
+          <li>✅ Les changements sont sauvegardés automatiquement</li>
           <li>✅ Cliquez sur "Voir tous" pour accéder à la liste complète des prospects</li>
-          <li>✅ La valeur totale au-dessus se met à jour en temps réel</li>
+          <li>✅ La valeur totale se met à jour en temps réel</li>
+          <li>✅ Les données se rafraîchissent silencieusement chaque 10 secondes</li>
         </ul>
       </Card>
     </div>

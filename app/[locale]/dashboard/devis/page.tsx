@@ -29,6 +29,9 @@ export default function DevisPage() {
   const [downloading, setDownloading] = useState<string | null>(null)
   const [sending, setSending] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [updatingId, setUpdatingId] = useState<string | null>(null)
+
+  const STATUTS = ['brouillon', 'en attente', 'accepté', 'refusé', 'expiré']
 
   useEffect(() => {
     init()
@@ -150,6 +153,35 @@ export default function DevisPage() {
     }
   }
 
+  const handleChangeStatut = async (devisId: string, newStatut: string) => {
+    try {
+      setUpdatingId(devisId)
+
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) throw new Error('No session')
+
+      const response = await fetch(`/api/dashboard/devis/${devisId}`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ statut: newStatut }),
+      })
+
+      if (!response.ok) throw new Error('Erreur mise à jour')
+
+      const { data } = await response.json()
+      setDevis(devis.map(d => d.id === devisId ? data : d))
+      alert('Statut mis à jour avec succès')
+    } catch (error) {
+      console.error('Error updating statut:', error)
+      alert('Erreur lors de la mise à jour du statut')
+    } finally {
+      setUpdatingId(null)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -228,6 +260,18 @@ export default function DevisPage() {
                   >
                     {sending === d.id ? 'Envoi...' : 'Envoyer'}
                   </button>
+                  <select
+                    value={d.statut}
+                    onChange={(e) => handleChangeStatut(d.id, e.target.value)}
+                    disabled={updatingId === d.id}
+                    className="px-3 py-2 text-sm font-semibold border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 cursor-pointer"
+                  >
+                    {STATUTS.map((statut) => (
+                      <option key={statut} value={statut}>
+                        {statut.charAt(0).toUpperCase() + statut.slice(1)}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
             </div>

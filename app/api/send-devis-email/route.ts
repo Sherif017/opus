@@ -83,7 +83,10 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const pdfBuffer = await pdfResponse.arrayBuffer()
+    // ✅ CORRECTION : Récupérer le PDF en buffer et le convertir en base64
+    const pdfArrayBuffer = await pdfResponse.arrayBuffer()
+    const pdfBuffer = Buffer.from(pdfArrayBuffer)
+    const pdfBase64 = pdfBuffer.toString('base64')
 
     // ✅ Envoyer l'email avec Resend
     const result = await resend.emails.send({
@@ -141,7 +144,7 @@ export async function POST(req: NextRequest) {
       attachments: [
         {
           filename: `devis-${devis.numero_devis}.pdf`,
-          content: Buffer.from(pdfBuffer),
+          content: pdfBase64,
         },
       ],
     })

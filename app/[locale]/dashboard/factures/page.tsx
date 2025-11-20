@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase-client'
 import { Card } from '@/components/ui/Card'
-import { FileText, Download, Mail, Edit2, Trash2, Send, CheckCircle } from 'lucide-react'
+import { FileText, Download, Mail, Edit2, Trash2, Send, CheckCircle, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
 
 interface Client {
@@ -30,51 +30,32 @@ interface Facture {
 export default function FacturesPage() {
   const [factures, setFactures] = useState<Facture[]>([])
   const [loading, setLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [sendingId, setSendingId] = useState<string | null>(null)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
 
-  useEffect(() => {
-    init()
-    
-    // Auto-refresh toutes les 10 secondes EN ARRIÈRE-PLAN
-    const interval = setInterval(() => {
-      refreshFacturesInBackground()
-    }, 10000)
-
-    return () => clearInterval(interval)
-  }, [])
-
-  const init = async () => {
-    try {
-      setLoading(true)
-      await refreshFactures()
-    } catch (error) {
-      console.error('Error in init:', error)
-    } finally {
-      setLoading(false)
-    }
+  // Récupérer le token de l'utilisateur connecté
+  const getAuthToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession()
+    return session?.access_token
   }
 
-  const refreshFactures = async (token?: string) => {
+  // Charger les factures depuis l'API
+  const loadFactures = async () => {
     try {
-      // ✅ Récupérer le token de la session si pas fourni
-      let accessToken = token
-      if (!accessToken) {
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+      setLoading(true)
+      const token = await getAuthToken()
 
-        if (sessionError || !session?.access_token) {
-          console.error('No session found:', sessionError)
-          return
-        }
-        accessToken = session.access_token
+      if (!token) {
+        console.error('Pas de token')
+        return
       }
 
-      // ✅ Appeler la nouvelle API sécurisée avec le token
       const response = await fetch('/api/dashboard/factures', {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
       })
@@ -89,18 +70,22 @@ export default function FacturesPage() {
       setFactures(data.factures || [])
     } catch (error) {
       console.error('Error refreshing factures:', error)
+    } finally {
+      setLoading(false)
     }
   }
 
-  const refreshFacturesInBackground = async () => {
+  // Charger les factures en arrière-plan (silencieusement)
+  const loadFacturesBackground = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session?.access_token) return
+      const token = await getAuthToken()
+
+      if (!token) return
 
       const response = await fetch('/api/dashboard/factures', {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
       })
@@ -114,13 +99,34 @@ export default function FacturesPage() {
     }
   }
 
+  // Rafraîchir manuellement (visible)
+  const refreshFactures = async () => {
+    try {
+      setIsRefreshing(true)
+      await loadFacturesBackground()
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
+
+  useEffect(() => {
+    loadFactures()
+
+    // Auto-refresh silencieux chaque 10 secondes
+    const interval = setInterval(() => {
+      loadFacturesBackground()
+    }, 10000)
+
+    return () => clearInterval(interval)
+  }, [])
+
   const handleDownload = async (factureId: string) => {
     try {
       setDownloadingId(factureId)
       const response = await fetch(`/api/factures/generate-pdf?factureId=${factureId}`)
-      
+
       if (!response.ok) throw new Error('Erreur génération PDF')
-      
+
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -143,18 +149,25 @@ export default function FacturesPage() {
 
     try {
       setSendingId(factureId)
+
+      // ✅ Appeler la route simple (sans Bearer token)
       const response = await fetch('/api/send-invoice-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ factureId, email: clientEmail }),
       })
 
-      if (!response.ok) throw new Error('Erreur envoi email')
-      
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Erreur envoi email')
+      }
+
       alert('Email envoyé avec succès')
+      // Rafraîchir les factures
+      await loadFacturesBackground()
     } catch (error) {
-      console.error('Error sending:', error)
-      alert('Erreur lors de l\'envoi')
+      console.error('Erreur envoi email', error)
+      alert(error instanceof Error ? error.message : 'Erreur lors de l\'envoi')
     } finally {
       setSendingId(null)
     }
@@ -164,13 +177,13 @@ export default function FacturesPage() {
     try {
       setUpdatingId(factureId)
 
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session?.access_token) throw new Error('No session')
+      const token = await getAuthToken()
+      if (!token) throw new Error('No session')
 
       const response = await fetch(`/api/dashboard/factures/${factureId}`, {
         method: 'PATCH',
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -197,13 +210,13 @@ export default function FacturesPage() {
     try {
       setUpdatingId(factureId)
 
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session?.access_token) throw new Error('No session')
+      const token = await getAuthToken()
+      if (!token) throw new Error('No session')
 
       const response = await fetch(`/api/dashboard/factures/${factureId}`, {
         method: 'DELETE',
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
         },
       })
 
@@ -235,94 +248,137 @@ export default function FacturesPage() {
 
   return (
     <div className="space-y-8 p-6">
+      {/* Header avec bouton refresh */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-4xl font-bold text-gray-900">Factures</h1>
           <p className="text-gray-600 mt-2">{factures.length} factures</p>
         </div>
-        <Link href="/dashboard/factures/new">
-          <button className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-            Nouvelle facture
+        <div className="flex items-center gap-3">
+          <button
+            onClick={refreshFactures}
+            disabled={isRefreshing}
+            className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50 transition-all"
+            title="Rafraîchir manuellement"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+            {isRefreshing ? 'Rafraîchissement...' : 'Rafraîchir'}
           </button>
-        </Link>
+          <Link href="/dashboard/factures/new">
+            <button className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold">
+              Nouvelle facture
+            </button>
+          </Link>
+        </div>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
-        <Card className="p-6">
-          <p className="text-gray-600 text-sm">Total</p>
-          <p className="text-3xl font-bold text-gray-900 mt-2">{totalAmount.toLocaleString()}€</p>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card className="p-6 bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200">
+          <p className="text-blue-700 text-sm font-semibold">Total</p>
+          <p className="text-3xl font-bold text-blue-900 mt-2">{totalAmount.toLocaleString('fr-FR', { maximumFractionDigits: 0 })}€</p>
         </Card>
-        <Card className="p-6">
-          <p className="text-gray-600 text-sm">Payé</p>
-          <p className="text-3xl font-bold text-green-600 mt-2">{totalPaid.toLocaleString()}€</p>
+        <Card className="p-6 bg-gradient-to-br from-green-50 to-green-100 border border-green-200">
+          <p className="text-green-700 text-sm font-semibold">Payé</p>
+          <p className="text-3xl font-bold text-green-900 mt-2">{totalPaid.toLocaleString('fr-FR', { maximumFractionDigits: 0 })}€</p>
         </Card>
-        <Card className="p-6">
-          <p className="text-gray-600 text-sm">À encaisser</p>
-          <p className="text-3xl font-bold text-red-600 mt-2">{unpaidAmount.toLocaleString()}€</p>
+        <Card className="p-6 bg-gradient-to-br from-red-50 to-red-100 border border-red-200">
+          <p className="text-red-700 text-sm font-semibold">À encaisser</p>
+          <p className="text-3xl font-bold text-red-900 mt-2">{unpaidAmount.toLocaleString('fr-FR', { maximumFractionDigits: 0 })}€</p>
         </Card>
       </div>
 
       {/* Factures list */}
       <div className="grid gap-4">
         {factures.length === 0 ? (
-          <div className="text-center py-12">
-            <p className="text-gray-500">Aucune facture créée</p>
-          </div>
+          <Card className="p-12 text-center">
+            <FileText className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+            <p className="text-gray-500 text-lg font-semibold">Aucune facture créée</p>
+            <p className="text-gray-400 text-sm mt-2">Créez votre première facture pour la voir apparaître ici</p>
+            <Link href="/dashboard/factures/new">
+              <button className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                Créer une facture
+              </button>
+            </Link>
+          </Card>
         ) : (
           factures.map((f) => (
-            <div key={f.id} className="bg-white rounded-lg shadow p-4">
+            <div key={f.id} className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow border border-gray-200 p-4">
               <div className="flex items-center justify-between">
                 <div className="flex-1">
                   <div className="flex items-center gap-4">
-                    <FileText className="w-5 h-5 text-blue-600" />
+                    <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                      <FileText className="w-6 h-6 text-blue-600" />
+                    </div>
                     <div>
-                      <h3 className="font-bold text-lg">{f.numero_facture}</h3>
+                      <h3 className="font-bold text-lg text-gray-900">{f.numero_facture}</h3>
                       <p className="text-sm text-gray-600">{f.clients?.nom || 'Client inconnu'}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-4 mt-3 text-sm">
-                    <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                      f.statut === 'payée' 
-                        ? 'bg-green-100 text-green-700' 
-                        : 'bg-yellow-100 text-yellow-700'
-                    }`}>
+                  <div className="flex items-center gap-4 mt-3 text-sm flex-wrap">
+                    <span
+                      className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                        f.statut === 'payée'
+                          ? 'bg-green-100 text-green-700'
+                          : f.statut === 'envoyée'
+                          ? 'bg-blue-100 text-blue-700'
+                          : 'bg-yellow-100 text-yellow-700'
+                      }`}
+                    >
                       {f.statut}
                     </span>
-                    <span className="font-bold text-gray-900">{f.montant_total_ttc?.toLocaleString()}€</span>
-                    <span className="text-gray-600">{new Date(f.date_creation).toLocaleDateString('fr-FR')}</span>
+                    <span className="font-bold text-gray-900">
+                      {f.montant_total_ttc?.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}€
+                    </span>
+                    <span className="text-gray-600">
+                      {new Date(f.date_creation).toLocaleDateString('fr-FR')}
+                    </span>
+                    {f.montant_paye && f.montant_paye > 0 && (
+                      <span className="text-green-600 font-semibold">
+                        Acompte: {f.montant_paye.toLocaleString('fr-FR', { maximumFractionDigits: 2 })}€
+                      </span>
+                    )}
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+
+                {/* Actions */}
+                <div className="flex items-center gap-2 ml-4">
                   <button
                     onClick={() => handleDownload(f.id)}
                     disabled={downloadingId === f.id}
-                    className="p-2 text-blue-600 hover:bg-blue-50 rounded disabled:opacity-50"
+                    className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg disabled:opacity-50 transition-all"
+                    title="Télécharger PDF"
                   >
-                    <Download className="w-4 h-4" />
+                    <Download className="w-5 h-5" />
                   </button>
+
                   <button
                     onClick={() => handleSendEmail(f.id, f.clients?.email)}
                     disabled={sendingId === f.id}
-                    className="p-2 text-green-600 hover:bg-green-50 rounded disabled:opacity-50"
+                    className="p-2 text-green-600 hover:bg-green-50 rounded-lg disabled:opacity-50 transition-all"
+                    title="Envoyer par email"
                   >
-                    <Mail className="w-4 h-4" />
+                    <Mail className="w-5 h-5" />
                   </button>
+
                   {f.statut !== 'payée' && (
                     <button
                       onClick={() => handleMarkAsPaid(f.id)}
                       disabled={updatingId === f.id}
-                      className="p-2 text-orange-600 hover:bg-orange-50 rounded disabled:opacity-50"
+                      className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg disabled:opacity-50 transition-all"
+                      title="Marquer comme payée"
                     >
-                      <CheckCircle className="w-4 h-4" />
+                      <CheckCircle className="w-5 h-5" />
                     </button>
                   )}
+
                   <button
                     onClick={() => handleDelete(f.id)}
                     disabled={updatingId === f.id}
-                    className="p-2 text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg disabled:opacity-50 transition-all"
+                    title="Supprimer"
                   >
-                    <Trash2 className="w-4 h-4" />
+                    <Trash2 className="w-5 h-5" />
                   </button>
                 </div>
               </div>
@@ -330,6 +386,19 @@ export default function FacturesPage() {
           ))
         )}
       </div>
+
+      {/* Tips */}
+      {factures.length > 0 && (
+        <Card className="p-6 bg-blue-50 border border-blue-200">
+          <h3 className="font-bold text-lg mb-3">💡 Tips</h3>
+          <ul className="space-y-2 text-sm text-blue-900">
+            <li>✅ Téléchargez la facture en PDF avec le bouton télécharger</li>
+            <li>✅ Envoyez la facture au client par email avec le bouton courrier</li>
+            <li>✅ Marquez la facture comme payée avec le bouton check</li>
+            <li>✅ Les données se rafraîchissent automatiquement chaque 10 secondes</li>
+          </ul>
+        </Card>
+      )}
     </div>
   )
 }

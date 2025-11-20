@@ -22,12 +22,12 @@ interface HistoriqueRelance {
   texte_relance: string
   date_envoi: string
   email_recipient: string
-  sujet_email: string
 }
 
 export default function RelancesPage() {
   const [prospects, setProspects] = useState<Prospect[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [generatingId, setGeneratingId] = useState<string | null>(null)
   const [sendingId, setSendingId] = useState<string | null>(null)
   const [relances, setRelances] = useState<Record<string, string>>({})
@@ -48,11 +48,12 @@ export default function RelancesPage() {
   const init = useCallback(async () => {
     try {
       setLoading(true)
+      setError(null)
 
       // ✅ Vérifier la session
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
-        console.error('❌ No session found')
+        setError('❌ Vous n\'êtes pas connecté')
         setLoading(false)
         return
       }
@@ -67,7 +68,11 @@ export default function RelancesPage() {
       })
 
       if (!response.ok) {
-        throw new Error('Erreur chargement relances')
+        const errorData = await response.json()
+        console.error('API Error:', errorData)
+        setError(`❌ Erreur: ${errorData.error || `Statut ${response.status}`}`)
+        setLoading(false)
+        return
       }
 
       const { prospects: prospectsData, companyName } = await response.json()
@@ -77,7 +82,9 @@ export default function RelancesPage() {
       // Récupérer l'email d'envoi
       setSenderEmail(process.env.NEXT_PUBLIC_SENDER_EMAIL || 'noreply@opus.boutique')
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erreur inconnue'
       console.error('Error loading data:', error)
+      setError(`❌ ${message}`)
     } finally {
       setLoading(false)
     }
@@ -181,25 +188,24 @@ ${entrepriseName}`
       })
 
       if (!response.ok) {
-        throw new Error('Erreur envoi email')
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Erreur envoi email')
       }
 
-      // Ajouter à l'historique local
-      const newRelance: HistoriqueRelance = {
-        id: Date.now().toString(),
-        numero_relance: numeroRelance,
-        texte_relance: editingMailData.corps,
-        date_envoi: new Date().toISOString(),
-        email_recipient: prospect.email,
-        sujet_email: editingMailData.sujet,
-      }
+      // ✅ CORRECTION : Enregistrer dans l'historique SANS sujet_email
+      const { error: historyError } = await supabase
+        .from('relances_historique')
+        .insert({
+          prospect_id: prospect.id,
+          numero_relance: numeroRelance,
+          texte_relance: editingMailData.corps,
+          date_envoi: new Date().toISOString(),
+          email_recipient: prospect.email,
+        })
 
-      setProspects(prospects.map(p => 
-        p.id === prospect.id 
-          ? { ...p, relances_historique: [...(p.relances_historique || []), newRelance] }
-          : p
-      ))
+      if (historyError) throw new Error(historyError.message)
 
+      alert('Email envoyé avec succès!')
       setEditingMailId(null)
       setEditingMailData({ sujet: '', corps: '' })
       setRelances(prev => {
@@ -208,9 +214,10 @@ ${entrepriseName}`
         return newRelances
       })
 
-      alert('Email envoyé avec succès!')
+      // Rafraîchir les données
+      init()
     } catch (error) {
-      console.error('Error sending relance:', error)
+      console.error('Error:', error)
       alert('Erreur: ' + (error instanceof Error ? error.message : 'Unknown'))
     } finally {
       setSendingId(null)
@@ -222,22 +229,30 @@ ${entrepriseName}`
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) throw new Error('Not authenticated')
 
-      const response = await fetch(`/api/dashboard/relances/${prospect.id}`, {
+      const response = await fetch(`/api/dashboard/prospects/${prospect.id}`, {
         method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ notes: formData.notes }),
+        body: JSON.stringify({
+          notes: formData.notes,
+        }),
       })
 
-      if (!response.ok) throw new Error('Erreur mise à jour notes')
+      if (!response.ok) {
+        throw new Error('Erreur mise à jour')
+      }
 
-      const { data } = await response.json()
+      // Mettre à jour localement
+      setProspects(prospects.map(p => (
+        p.id === prospect.id
+          ? { ...p, notes: formData.notes }
+          : p
+      )))
 
-      setProspects(prospects.map(p => p.id === prospect.id ? data : p))
       setEditingNotesId(null)
-
+      setFormData({ notes: '' })
       alert('Notes mises à jour!')
     } catch (error) {
       console.error('Error updating notes:', error)
@@ -256,103 +271,139 @@ ${entrepriseName}`
     )
   }
 
+  if (error) {
+    return (
+      <div className="p-6 bg-red-50 border border-red-200 rounded-lg">
+        <p className="text-red-700 font-semibold">{error}</p>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-8 p-6">
-      <div>
-        <h1 className="text-4xl font-bold text-gray-900">Relances</h1>
-        <p className="text-gray-600 mt-2">Gérez vos relances clients avec l'IA</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-4xl font-bold text-gray-900">Relances</h1>
+          <p className="text-gray-600 mt-2">Gérez vos relances clients avec l'IA • {prospects.length} prospect(s)</p>
+        </div>
+        <button
+          onClick={() => init()}
+          className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition"
+        >
+          <MessageSquare className="w-4 h-4" />
+          Rafraîchir
+        </button>
       </div>
 
       {prospects.length === 0 ? (
-        <div className="text-center py-12">
-          <p className="text-gray-500">Aucun prospect trouvé</p>
+        <div className="text-center py-20">
+          <MessageSquare className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+          <p className="text-gray-500 text-lg font-semibold">Aucun prospect trouvé</p>
+          <p className="text-gray-400 text-sm mt-2">Créez des prospects pour gérer les relances</p>
         </div>
       ) : (
         <div className="space-y-6">
           {prospects.map((prospect) => {
             const numRelances = prospect.relances_historique?.length || 0
-            const hasRelance = !!relances[prospect.id]
+            const nextRelanceNumber = numRelances + 1
+            const hasRelance = relances[prospect.id] !== undefined
             const isEditingMail = editingMailId === prospect.id
             const isNotesOpen = expandedNotes === prospect.id
-            const isEditingNotes = editingNotesId === prospect.id
-            const nextRelanceNumber = numRelances + 1
 
             return (
               <div key={prospect.id} className="space-y-3">
-                {/* Carte prospect */}
-                <Card className="bg-white border border-gray-200 rounded-xl p-4 hover:shadow-md transition-all">
-                  <div className="flex flex-col gap-4">
-                    <div className="flex-1">
-                      <h3 className="font-bold text-lg text-gray-900">{prospect.nom}</h3>
-                      <div className="flex flex-wrap gap-4 mt-2 text-sm text-gray-600">
-                        {prospect.email && <span>📧 {prospect.email}</span>}
-                        {prospect.valeur_potentielle && <span>💰 {prospect.valeur_potentielle}€</span>}
-                        {numRelances > 0 && <span>📬 {numRelances} relance{numRelances > 1 ? 's' : ''}</span>}
+                {/* Card principal */}
+                <Card className="border-l-4 border-blue-500 p-6 hover:shadow-lg transition-shadow">
+                  <div className="flex items-start justify-between gap-6">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-xl font-bold text-gray-900 truncate">{prospect.nom}</h3>
+                      <p className="text-sm text-gray-600 mt-1">📧 {prospect.email || 'Email non fourni'}</p>
+
+                      {prospect.dernier_contact && (
+                        <p className="text-xs text-gray-500 mt-2">
+                          Dernier contact: {new Date(prospect.dernier_contact).toLocaleDateString('fr-FR')}
+                        </p>
+                      )}
+
+                      {prospect.valeur_potentielle && (
+                        <p className="text-sm font-semibold text-green-600 mt-2">
+                          💰 Valeur potentielle: {prospect.valeur_potentielle.toLocaleString()}€
+                        </p>
+                      )}
+
+                      <div className="mt-3">
+                        {numRelances > 0 && (
+                          <span className="inline-block px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-semibold">
+                            {numRelances} relance{numRelances > 1 ? 's' : ''} envoyée{numRelances > 1 ? 's' : ''}
+                          </span>
+                        )}
                       </div>
 
-                      {/* Notes du prospect */}
-                      {isEditingNotes ? (
-                        <div className="mt-4 space-y-3 bg-blue-50 p-4 rounded-lg border border-blue-200">
-                          <textarea
-                            value={formData.notes}
-                            onChange={(e) => setFormData({ notes: e.target.value })}
-                            placeholder="Ajouter des notes..."
-                            className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 text-sm"
-                            rows={4}
-                          />
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => handleUpdateNotes(prospect)}
-                              className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold text-sm"
-                            >
-                              Enregistrer
-                            </button>
-                            <button
-                              onClick={() => setEditingNotesId(null)}
-                              className="flex-1 px-3 py-2 bg-gray-200 hover:bg-gray-300 text-gray-900 rounded-lg font-semibold text-sm"
-                            >
-                              Annuler
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <>
-                          {isNotesOpen && prospect.notes && (
-                            <div className="mt-3 p-3 bg-amber-50 rounded border-l-4 border-amber-400">
-                              <p className="text-gray-800 text-sm whitespace-pre-wrap">{prospect.notes}</p>
+                      {/* Notes section */}
+                      <div className="mt-4">
+                        {editingNotesId === prospect.id ? (
+                          <div className="space-y-2">
+                            <textarea
+                              value={formData.notes}
+                              onChange={(e) => setFormData({ notes: e.target.value })}
+                              placeholder="Ajouter une note..."
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                              rows={4}
+                            />
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => handleUpdateNotes(prospect)}
+                                className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold text-sm"
+                              >
+                                Enregistrer
+                              </button>
+                              <button
+                                onClick={() => setEditingNotesId(null)}
+                                className="flex-1 px-3 py-2 bg-gray-200 hover:bg-gray-300 text-gray-900 rounded-lg font-semibold text-sm"
+                              >
+                                Annuler
+                              </button>
                             </div>
-                          )}
-                        </>
-                      )}
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex flex-wrap gap-2 w-full sm:w-auto sm:flex-col-reverse">
-                      <button
-                        onClick={() => {
-                          setFormData({ notes: prospect.notes || '' })
-                          setEditingNotesId(prospect.id)
-                        }}
-                        className="px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-lg font-semibold text-sm transition-colors"
-                      >
-                        📝 Notes
-                      </button>
-
-                      {!isEditingMail && !hasRelance ? (
-                        numRelances >= 3 ? (
-                          <button disabled className="px-4 py-2 bg-gray-100 text-gray-400 rounded-lg font-semibold text-sm cursor-not-allowed">
-                            ✓ 3 relances max
-                          </button>
+                          </div>
                         ) : (
-                          <button
-                            onClick={() => generateRelance(prospect)}
-                            disabled={generatingId === prospect.id}
-                            className="px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-lg font-semibold text-sm transition-colors disabled:opacity-50"
-                          >
-                            {generatingId === prospect.id ? '⏳ Gen...' : `✨ Relance ${nextRelanceNumber}`}
-                          </button>
-                        )
-                      ) : null}
+                          <>
+                            {isNotesOpen && prospect.notes && (
+                              <div className="mt-3 p-3 bg-amber-50 rounded border-l-4 border-amber-400">
+                                <p className="text-gray-800 text-sm whitespace-pre-wrap">{prospect.notes}</p>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex flex-wrap gap-2 w-full sm:w-auto sm:flex-col-reverse">
+                        <button
+                          onClick={() => {
+                            setFormData({ notes: prospect.notes || '' })
+                            setEditingNotesId(prospect.id)
+                          }}
+                          className="px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-lg font-semibold text-sm transition-colors"
+                        >
+                          📝 Notes
+                        </button>
+
+                        {!isEditingMail && !hasRelance ? (
+                          numRelances >= 3 ? (
+                            <button disabled className="px-4 py-2 bg-gray-100 text-gray-400 rounded-lg font-semibold text-sm cursor-not-allowed">
+                              ✓ 3 relances max
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => generateRelance(prospect)}
+                              disabled={generatingId === prospect.id}
+                              className="px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-lg font-semibold text-sm transition-colors disabled:opacity-50"
+                            >
+                              {generatingId === prospect.id ? '⏳ Gen...' : `✨ Relance ${nextRelanceNumber}`}
+                            </button>
+                          )
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 </Card>
@@ -467,7 +518,6 @@ ${entrepriseName}`
                               </p>
                             </div>
                             <p className="text-xs text-gray-600 mb-2">À : {relance.email_recipient}</p>
-                            <p className="text-xs text-gray-600 mb-3">Objet : {relance.sujet_email}</p>
                             <div className="bg-white p-3 rounded border border-gray-300 text-sm text-gray-700 whitespace-pre-wrap max-h-40 overflow-y-auto">
                               {relance.texte_relance}
                             </div>

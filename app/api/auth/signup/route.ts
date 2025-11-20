@@ -2,22 +2,19 @@ import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(req: NextRequest) {
-    // ✅ Créer les clients DANS la fonction
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    )
-    const supabaseAdmin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
+
+  const supabaseAdmin = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  )
 
   try {
-    // ✅ Créer les clients DANS la fonction (pas au niveau du module)
-    const { email, password, nomEntreprise, nomArtisan, prenomArtisan } =
-      await req.json()
+    const { email, password, nomEntreprise, nomArtisan, prenomArtisan } = await req.json()
 
-    // Validation basique
     if (!email || !password || !nomEntreprise || !nomArtisan) {
       return NextResponse.json(
         { error: 'Tous les champs requis sont manquants' },
@@ -25,7 +22,6 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Validation email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
     if (!emailRegex.test(email)) {
       return NextResponse.json(
@@ -34,7 +30,6 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Validation mot de passe
     if (password.length < 8) {
       return NextResponse.json(
         { error: 'Le mot de passe doit contenir au moins 8 caractères' },
@@ -42,32 +37,30 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // ✅ VÉRIFIER SI L'EMAIL EXISTE DÉJÀ - avec gestion d'erreur correcte
-    const { data: existingUser, error: checkError } = await supabaseAdmin
+    const { data: existingUser } = await supabaseAdmin
       .from('utilisateurs')
       .select('email')
       .eq('email', email)
-      .maybeSingle()  // ← UTILISER maybeSingle() au lieu de single()
+      .maybeSingle()
 
     if (existingUser) {
-      // L'email existe déjà 
       return NextResponse.json(
         { error: 'Cet email est déjà lié à un compte' },
         { status: 400 }
       )
     }
 
-    // 1. Créer utilisateur Supabase Auth avec confirmation d'email
+    // 1. Créer l'utilisateur dans Supabase Auth
+    // Supabase enverra automatiquement l'email de confirmation
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/verify-email?email=${encodeURIComponent(email)}`,
+        emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/login`,
       },
     })
 
     if (authError) {
-      // Détecter si c'est une erreur d'email déjà existant dans Auth
       if (authError.message.includes('already registered') || authError.message.includes('User already exists')) {
         return NextResponse.json(
           { error: 'Cet email est déjà lié à un compte' },
@@ -81,7 +74,7 @@ export async function POST(req: NextRequest) {
       throw new Error('Erreur lors de la création de l\'utilisateur')
     }
 
-    // 2. Créer l'entreprise UNIQUE pour cet utilisateur - utiliser supabaseAdmin
+    // 2. Créer l'entreprise
     const { data: company, error: companyError } = await supabaseAdmin
       .from('entreprises')
       .insert([
@@ -102,13 +95,13 @@ export async function POST(req: NextRequest) {
       throw new Error('Erreur lors de la création de l\'entreprise')
     }
 
-    // 3. Ajouter l'utilisateur dans la table utilisateurs avec SA PROPRE entreprise_id
+    // 3. Créer l'utilisateur dans la table utilisateurs
     const { error: userError } = await supabaseAdmin
       .from('utilisateurs')
       .insert([
         {
           id: authData.user.id,
-          entreprise_id: company.id,  // ← CHAQUE UTILISATEUR A SA PROPRE ENTREPRISE
+          entreprise_id: company.id,
           email: email,
           nom: nomArtisan,
           prenom: prenomArtisan || '',
@@ -124,8 +117,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         success: true,
-        user: authData.user,
-        message: 'Un email de confirmation a été envoyé. Veuillez vérifier votre boîte de réception.',
+        message: 'Inscription réussie! Un email de confirmation a été envoyé.',
       },
       { status: 201 }
     )

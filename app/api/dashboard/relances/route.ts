@@ -15,10 +15,23 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET(request: NextRequest) {
   try {
+    console.log('📋 [RELANCES] Starting GET /api/dashboard/relances')
+    
     // ✅ Récupérer l'entreprise_id de manière sécurisée
-    const entrepriseId = await getEntrepriseIdFromRequest(request)
+    let entrepriseId: string
+    try {
+      entrepriseId = await getEntrepriseIdFromRequest(request)
+      console.log('✅ [RELANCES] Enterprise ID:', entrepriseId)
+    } catch (authError) {
+      console.error('❌ [RELANCES] Auth error:', authError)
+      return NextResponse.json(
+        { error: `Authentification: ${authError instanceof Error ? authError.message : 'Erreur inconnue'}` },
+        { status: 401 }
+      )
+    }
 
     // ✅ Récupérer les prospects filtrés par entreprise
+    console.log('📋 [RELANCES] Fetching prospects...')
     const { data, error } = await supabaseAdmin
       .from('prospects')
       .select(`
@@ -28,17 +41,21 @@ export async function GET(request: NextRequest) {
           numero_relance,
           texte_relance,
           date_envoi,
-          email_recipient,
-          sujet_email
+          email_recipient
         )
       `)
       .eq('entreprise_id', entrepriseId)
       .order('dernier_contact', { ascending: false })
 
     if (error) {
-      console.error('Supabase error:', error)
-      throw error
+      console.error('❌ [RELANCES] Supabase error:', error)
+      return NextResponse.json(
+        { error: `Erreur base de données: ${error.message}` },
+        { status: 500 }
+      )
     }
+
+    console.log('✅ [RELANCES] Prospects fetched:', data?.length)
 
     // Récupérer aussi les infos de l'entreprise
     const { data: companyData } = await supabaseAdmin
@@ -47,16 +64,18 @@ export async function GET(request: NextRequest) {
       .eq('id', entrepriseId)
       .single()
 
+    console.log('✅ [RELANCES] Company data:', companyData?.nom)
+
     return NextResponse.json({ 
       prospects: data,
       companyName: companyData?.nom || ''
     })
   } catch (error) {
-    console.error('Error in GET /api/dashboard/relances:', error)
+    console.error('❌ [RELANCES] Unexpected error:', error)
     const message = error instanceof Error ? error.message : 'Erreur serveur'
     return NextResponse.json(
-      { error: message },
-      { status: message.includes('authentifié') ? 401 : 500 }
+      { error: `Erreur: ${message}` },
+      { status: 500 }
     )
   }
 }
@@ -67,6 +86,8 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
+    console.log('📋 [RELANCES] Starting POST /api/dashboard/relances')
+    
     // ✅ Récupérer l'entreprise_id
     const entrepriseId = await getEntrepriseIdFromRequest(request)
 
@@ -120,13 +141,15 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (relanceError) {
-      console.error('Supabase error:', relanceError)
+      console.error('❌ [RELANCES] Supabase error:', relanceError)
       throw relanceError
     }
 
+    console.log('✅ [RELANCES] Relance created successfully')
+
     return NextResponse.json({ data: relanceData }, { status: 201 })
   } catch (error) {
-    console.error('Error in POST /api/dashboard/relances:', error)
+    console.error('❌ [RELANCES] Error in POST:', error)
     const message = error instanceof Error ? error.message : 'Erreur serveur'
     return NextResponse.json(
       { error: message },
