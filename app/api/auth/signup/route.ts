@@ -1,6 +1,16 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+}
+
+export async function OPTIONS() {
+  return NextResponse.json({}, { headers: CORS_HEADERS })
+}
+
 export async function POST(req: NextRequest) {
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -18,7 +28,7 @@ export async function POST(req: NextRequest) {
     if (!email || !password || !nomEntreprise || !nomArtisan) {
       return NextResponse.json(
         { error: 'Tous les champs requis sont manquants' },
-        { status: 400 }
+        { status: 400, headers: CORS_HEADERS }
       )
     }
 
@@ -26,14 +36,14 @@ export async function POST(req: NextRequest) {
     if (!emailRegex.test(email)) {
       return NextResponse.json(
         { error: 'Email invalide' },
-        { status: 400 }
+        { status: 400, headers: CORS_HEADERS }
       )
     }
 
     if (password.length < 8) {
       return NextResponse.json(
         { error: 'Le mot de passe doit contenir au moins 8 caractères' },
-        { status: 400 }
+        { status: 400, headers: CORS_HEADERS }
       )
     }
 
@@ -46,7 +56,7 @@ export async function POST(req: NextRequest) {
     if (existingUser) {
       return NextResponse.json(
         { error: 'Cet email est déjà lié à un compte' },
-        { status: 400 }
+        { status: 400, headers: CORS_HEADERS }
       )
     }
 
@@ -64,7 +74,7 @@ export async function POST(req: NextRequest) {
       if (authError.message.includes('already registered') || authError.message.includes('User already exists')) {
         return NextResponse.json(
           { error: 'Cet email est déjà lié à un compte' },
-          { status: 400 }
+          { status: 400, headers: CORS_HEADERS }
         )
       }
       throw new Error(authError.message)
@@ -119,13 +129,13 @@ export async function POST(req: NextRequest) {
         success: true,
         message: 'Inscription réussie! Un email de confirmation a été envoyé.',
       },
-      { status: 201 }
+      { status: 201, headers: CORS_HEADERS }
     )
   } catch (error) {
     console.error('Signup error:', error)
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Erreur serveur' },
-      { status: 400 }
+      { status: 400, headers: CORS_HEADERS }
     )
   }
 }
