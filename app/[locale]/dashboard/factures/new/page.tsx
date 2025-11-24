@@ -29,6 +29,7 @@ export default function SelectDevisForFacturePage() {
   const router = useRouter()
   const [devis, setDevis] = useState<Devis[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [downloading, setDownloading] = useState<string | null>(null)
   const [sending, setSending] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
@@ -40,6 +41,7 @@ export default function SelectDevisForFacturePage() {
   const init = async () => {
     try {
       setLoading(true)
+      setError(null)
       
       const { data: { session } } = await supabase.auth.getSession()
       
@@ -52,12 +54,14 @@ export default function SelectDevisForFacturePage() {
       await refreshDevis(session.access_token)
     } catch (error) {
       console.error('Error in init:', error)
+      setError('Erreur lors du chargement des devis')
       setLoading(false)
     }
   }
 
   const refreshDevis = async (token?: string) => {
     try {
+      setError(null)
       let accessToken = token
       if (!accessToken) {
         const { data: { session }, error: sessionError } = await supabase.auth.getSession()
@@ -78,8 +82,9 @@ export default function SelectDevisForFacturePage() {
       })
 
       if (!response.ok) {
-        const error = await response.json()
-        console.error('❌ API Error:', error)
+        const errorText = await response.text()
+        console.error('❌ API Error:', errorText)
+        setError('Erreur lors du chargement des devis')
         return
       }
 
@@ -91,6 +96,7 @@ export default function SelectDevisForFacturePage() {
       setDevis(availableDevis)
     } catch (error) {
       console.error('Error refreshing devis:', error)
+      setError('Erreur réseau lors du chargement des devis')
     } finally {
       setLoading(false)
       setRefreshing(false)
@@ -184,6 +190,13 @@ export default function SelectDevisForFacturePage() {
           {refreshing ? 'Rafraîchissement...' : 'Rafraîchir'}
         </button>
       </div>
+
+      {/* Error message */}
+      {error && (
+        <Card className="p-4 bg-red-50 border border-red-200">
+          <p className="text-red-600">{error}</p>
+        </Card>
+      )}
 
       {/* Stats */}
       {devis.length > 0 && (

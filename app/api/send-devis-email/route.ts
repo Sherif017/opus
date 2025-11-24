@@ -50,9 +50,12 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // ✅ Générer le PDF avec la route améliorée
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
-    const pdfResponse = await fetch(`${appUrl}/api/devis/generate-pdf`, {
+    // ✅ Générer le PDF avec URL relative
+    const baseUrl = process.env.VERCEL_URL 
+      ? `https://${process.env.VERCEL_URL}`
+      : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    
+    const pdfResponse = await fetch(`${baseUrl}/api/devis/generate-pdf`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

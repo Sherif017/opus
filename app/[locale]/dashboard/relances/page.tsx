@@ -168,10 +168,7 @@ ${entrepriseName}`
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) throw new Error('Not authenticated')
 
-      const numRelances = prospect.relances_historique?.length || 0
-      const numeroRelance = numRelances + 1
-
-      // Envoyer l'email via Resend
+      // ✅ CORRECTION : Utiliser les bons paramètres d'API
       const response = await fetch('/api/emails/send-relance', {
         method: 'POST',
         headers: {
@@ -179,33 +176,21 @@ ${entrepriseName}`
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          prospect_id: prospect.id,
-          email_recipient: prospect.email,
-          sujet_email: editingMailData.sujet,
-          texte_relance: editingMailData.corps,
-          numero_relance: numeroRelance,
+          prospectEmail: prospect.email,
+          prospectName: prospect.nom,
+          relanceText: editingMailData.corps,
+          companyName: entrepriseName,
+          sujet: editingMailData.sujet,
         }),
       })
 
+      const data = await response.json()
+
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Erreur envoi email')
+        throw new Error(data.error || 'Erreur lors de l\'envoi')
       }
 
-      // ✅ CORRECTION : Enregistrer dans l'historique SANS sujet_email
-      const { error: historyError } = await supabase
-        .from('relances_historique')
-        .insert({
-          prospect_id: prospect.id,
-          numero_relance: numeroRelance,
-          texte_relance: editingMailData.corps,
-          date_envoi: new Date().toISOString(),
-          email_recipient: prospect.email,
-        })
-
-      if (historyError) throw new Error(historyError.message)
-
-      alert('Email envoyé avec succès!')
+      alert('Relance envoyée avec succès!')
       setEditingMailId(null)
       setEditingMailData({ sujet: '', corps: '' })
       setRelances(prev => {
@@ -215,10 +200,10 @@ ${entrepriseName}`
       })
 
       // Rafraîchir les données
-      init()
+      await init()
     } catch (error) {
-      console.error('Error:', error)
-      alert('Erreur: ' + (error instanceof Error ? error.message : 'Unknown'))
+      console.error('Error sending relance:', error)
+      alert('Erreur lors de l\'envoi: ' + (error instanceof Error ? error.message : 'Unknown'))
     } finally {
       setSendingId(null)
     }
@@ -235,25 +220,15 @@ ${entrepriseName}`
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          notes: formData.notes,
-        }),
+        body: JSON.stringify({ notes: formData.notes }),
       })
 
-      if (!response.ok) {
-        throw new Error('Erreur mise à jour')
-      }
+      if (!response.ok) throw new Error('Erreur mise à jour')
 
-      // Mettre à jour localement
-      setProspects(prospects.map(p => (
-        p.id === prospect.id
-          ? { ...p, notes: formData.notes }
-          : p
-      )))
-
+      const { data: updatedProspect } = await response.json()
+      setProspects(prospects.map(p => p.id === prospect.id ? updatedProspect : p))
       setEditingNotesId(null)
-      setFormData({ notes: '' })
-      alert('Notes mises à jour!')
+      alert('Notes mises à jour avec succès!')
     } catch (error) {
       console.error('Error updating notes:', error)
       alert('Erreur: ' + (error instanceof Error ? error.message : 'Unknown'))
@@ -265,7 +240,7 @@ ${entrepriseName}`
       <div className="flex items-center justify-center h-screen">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Chargement des relances...</p>
+          <p className="text-gray-600">Chargement des prospects...</p>
         </div>
       </div>
     )
@@ -273,82 +248,71 @@ ${entrepriseName}`
 
   if (error) {
     return (
-      <div className="p-6 bg-red-50 border border-red-200 rounded-lg">
-        <p className="text-red-700 font-semibold">{error}</p>
+      <div className="p-6">
+        <Card className="p-4 bg-red-50 border border-red-200">
+          <p className="text-red-600">{error}</p>
+          <button
+            onClick={() => init()}
+            className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg"
+          >
+            Réessayer
+          </button>
+        </Card>
       </div>
     )
   }
 
   return (
     <div className="space-y-8 p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-4xl font-bold text-gray-900">Relances</h1>
-          <p className="text-gray-600 mt-2">Gérez vos relances clients avec l'IA • {prospects.length} prospect(s)</p>
-        </div>
-        <button
-          onClick={() => init()}
-          className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition"
-        >
-          <MessageSquare className="w-4 h-4" />
-          Rafraîchir
-        </button>
+      <div>
+        <h1 className="text-4xl font-bold text-gray-900">Relances</h1>
+        <p className="text-gray-600 mt-2">Gérez vos relances auprès des prospects</p>
       </div>
 
       {prospects.length === 0 ? (
-        <div className="text-center py-20">
-          <MessageSquare className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <p className="text-gray-500 text-lg font-semibold">Aucun prospect trouvé</p>
-          <p className="text-gray-400 text-sm mt-2">Créez des prospects pour gérer les relances</p>
-        </div>
+        <Card className="p-12 text-center">
+          <MessageSquare className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+          <p className="text-gray-500 text-lg font-semibold">Aucun prospect</p>
+          <p className="text-gray-400 text-sm mt-2">Créez des prospects pour pouvoir gérer les relances</p>
+        </Card>
       ) : (
-        <div className="space-y-6">
+        <div className="grid gap-6">
           {prospects.map((prospect) => {
-            const numRelances = prospect.relances_historique?.length || 0
-            const nextRelanceNumber = numRelances + 1
-            const hasRelance = relances[prospect.id] !== undefined
+            const hasRelance = relances[prospect.id]
             const isEditingMail = editingMailId === prospect.id
             const isNotesOpen = expandedNotes === prospect.id
+            const numRelances = prospect.relances_historique?.length || 0
+            const nextRelanceNumber = numRelances + 1
 
             return (
-              <div key={prospect.id} className="space-y-3">
-                {/* Card principal */}
-                <Card className="border-l-4 border-blue-500 p-6 hover:shadow-lg transition-shadow">
-                  <div className="flex items-start justify-between gap-6">
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-xl font-bold text-gray-900 truncate">{prospect.nom}</h3>
-                      <p className="text-sm text-gray-600 mt-1">📧 {prospect.email || 'Email non fourni'}</p>
+              <div key={prospect.id}>
+                <Card className="bg-white rounded-xl p-6 border border-gray-200 hover:shadow-lg transition-shadow">
+                  <div className="flex items-start justify-between gap-4 flex-col sm:flex-row">
+                    <div className="flex-1 w-full">
+                      <h3 className="text-xl font-bold text-gray-900">{prospect.nom}</h3>
+                      <p className="text-sm text-gray-600 mt-1">{prospect.email || 'Email non disponible'}</p>
 
                       {prospect.dernier_contact && (
                         <p className="text-xs text-gray-500 mt-2">
-                          Dernier contact: {new Date(prospect.dernier_contact).toLocaleDateString('fr-FR')}
+                          Dernier contact : {new Date(prospect.dernier_contact).toLocaleDateString('fr-FR')}
                         </p>
                       )}
 
                       {prospect.valeur_potentielle && (
                         <p className="text-sm font-semibold text-green-600 mt-2">
-                          💰 Valeur potentielle: {prospect.valeur_potentielle.toLocaleString()}€
+                          Valeur potentielle: {prospect.valeur_potentielle.toLocaleString()}€
                         </p>
                       )}
 
-                      <div className="mt-3">
-                        {numRelances > 0 && (
-                          <span className="inline-block px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-semibold">
-                            {numRelances} relance{numRelances > 1 ? 's' : ''} envoyée{numRelances > 1 ? 's' : ''}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Notes section */}
+                      {/* Notes Section */}
                       <div className="mt-4">
                         {editingNotesId === prospect.id ? (
-                          <div className="space-y-2">
+                          <div className="space-y-3">
                             <textarea
                               value={formData.notes}
                               onChange={(e) => setFormData({ notes: e.target.value })}
+                              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-vertical min-h-[100px]"
                               placeholder="Ajouter une note..."
-                              className="w-full px-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                              rows={4}
                             />
                             <div className="flex gap-2">
                               <button
@@ -377,7 +341,7 @@ ${entrepriseName}`
                       </div>
 
                       {/* Actions */}
-                      <div className="flex flex-wrap gap-2 w-full sm:w-auto sm:flex-col-reverse">
+                      <div className="flex flex-wrap gap-2 w-full sm:w-auto sm:flex-col-reverse mt-4">
                         <button
                           onClick={() => {
                             setFormData({ notes: prospect.notes || '' })
@@ -410,7 +374,7 @@ ${entrepriseName}`
 
                 {/* Formulaire d'édition du mail */}
                 {isEditingMail && hasRelance && (
-                  <Card className="bg-gradient-to-br from-amber-50 to-yellow-50 border-2 border-amber-300 rounded-xl p-6 shadow-md">
+                  <Card className="bg-gradient-to-br from-amber-50 to-yellow-50 border-2 border-amber-300 rounded-xl p-6 shadow-md mt-4">
                     <div className="flex items-center gap-2 mb-4">
                       <Edit2 className="w-5 h-5 text-amber-600" />
                       <h3 className="text-lg font-bold text-amber-900">
@@ -489,7 +453,7 @@ ${entrepriseName}`
 
                 {/* Historique */}
                 {numRelances > 0 && (
-                  <div className="bg-white border border-gray-200 rounded-xl p-4 cursor-pointer hover:shadow-md transition-all"
+                  <div className="bg-white border border-gray-200 rounded-xl p-4 cursor-pointer hover:shadow-md transition-all mt-4"
                     onClick={() => setHistoriqueOpen(historiqueOpen === prospect.id ? null : prospect.id)}>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
