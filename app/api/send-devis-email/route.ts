@@ -8,8 +8,11 @@ export const runtime = 'nodejs'
 export async function POST(req: NextRequest) {
   try {
     const { devisId, email } = await req.json()
+    
+    console.log('🔍 send-devis-email called with:', { devisId, email })
 
     if (!devisId || !email) {
+      console.error('❌ Missing data:', { devisId, email })
       return NextResponse.json(
         { error: 'Données manquantes' },
         { status: 400 }
@@ -17,6 +20,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!process.env.RESEND_API_KEY) {
+      console.error('❌ RESEND_API_KEY not configured')
       return NextResponse.json(
         { error: 'Clé API Resend non configurée' },
         { status: 500 }
@@ -31,6 +35,8 @@ export async function POST(req: NextRequest) {
 
     const resend = new Resend(process.env.RESEND_API_KEY)
 
+    console.log('📦 Fetching devis:', devisId)
+
     // ✅ Récupérer le devis avec toutes les données
     const { data: devis, error: devisError } = await supabase
       .from('devis')
@@ -43,19 +49,25 @@ export async function POST(req: NextRequest) {
       .single()
 
     if (devisError || !devis) {
-      console.error('Erreur récupération devis:', devisError)
+      console.error('❌ Devis not found:', devisError)
       return NextResponse.json(
         { error: 'Devis non trouvé' },
         { status: 404 }
       )
     }
 
-    // ✅ Générer le PDF avec URL relative
+    console.log('✅ Devis found:', devis.numero_devis)
+
+    // ✅ Générer le PDF - appel interne SANS authentification
+    // car generate-pdf ne requiert pas d'auth (c'est une route publique)
     const baseUrl = process.env.VERCEL_URL 
       ? `https://${process.env.VERCEL_URL}`
       : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
     
-    const pdfResponse = await fetch(`${baseUrl}/api/devis/generate-pdf`, {
+    const pdfUrl = `${baseUrl}/api/devis/generate-pdf`
+    console.log('🔗 PDF URL:', pdfUrl)
+    
+    const pdfResponse = await fetch(pdfUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -78,10 +90,16 @@ export async function POST(req: NextRequest) {
       }),
     })
 
+    console.log('📄 PDF Response status:', pdfResponse.status)
+
     if (!pdfResponse.ok) {
-      console.error('Erreur génération PDF:', pdfResponse.status)
+      const errorText = await pdfResponse.text()
+      console.error('❌ PDF generation failed:', {
+        status: pdfResponse.status,
+        error: errorText,
+      })
       return NextResponse.json(
-        { error: 'Erreur génération PDF' },
+        { error: 'Erreur génération PDF: ' + pdfResponse.status },
         { status: 500 }
       )
     }
@@ -91,7 +109,14 @@ export async function POST(req: NextRequest) {
     const pdfBuffer = Buffer.from(pdfArrayBuffer)
     const pdfBase64 = pdfBuffer.toString('base64')
 
+    console.log('✅ PDF generated successfully:', {
+      size: pdfArrayBuffer.byteLength,
+      base64Length: pdfBase64.length,
+    })
+
     // ✅ Envoyer l'email avec Resend
+    console.log('📧 Sending email to:', email)
+
     const result = await resend.emails.send({
       from: process.env.RESEND_FROM_EMAIL || 'noreply@opus.boutique',
       to: email,
@@ -153,9 +178,11 @@ export async function POST(req: NextRequest) {
     })
 
     if (result.error) {
-      console.error('Erreur Resend:', result.error)
+      console.error('❌ Resend error:', result.error)
       throw new Error(result.error.message)
     }
+
+    console.log('✅ Email sent successfully:', result.data?.id)
 
     return NextResponse.json({ 
       success: true, 
@@ -163,7 +190,7 @@ export async function POST(req: NextRequest) {
       message: 'Email envoyé avec succès'
     })
   } catch (error) {
-    console.error('Email Error:', error)
+    console.error('❌ Email Error:', error)
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Erreur envoi email' },
       { status: 500 }

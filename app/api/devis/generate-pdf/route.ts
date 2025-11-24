@@ -1,44 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { Resend } from 'resend'
+import jsPDF from 'jspdf'
+import { addLogoToHeader, addCompanyHeaderSection, addLegalFooter, calculateTotalsByVAT } from '@/lib/pdf-utils'
 import { createClient } from '@supabase/supabase-js'
 
-export const dynamic = 'force-dynamic'
-export const runtime = 'nodejs'
+interface LigneDevis {
+  description: string
+  quantite: number
+  prix_unitaire: number
+  taux_tva: number
+}
 
-export async function POST(req: NextRequest) {
+export async function GET(req: NextRequest) {
   try {
-    const { devisId, email } = await req.json()
-    
-    console.log('🔍 send-devis-email called with:', { devisId, email })
+    const devisId = req.nextUrl.searchParams.get('devisId')
 
-    if (!devisId || !email) {
-      console.error('❌ Missing data:', { devisId, email })
+    if (!devisId) {
       return NextResponse.json(
-        { error: 'Données manquantes' },
+        { error: 'devisId manquant' },
         { status: 400 }
       )
     }
 
-    if (!process.env.RESEND_API_KEY) {
-      console.error('❌ RESEND_API_KEY not configured')
-      return NextResponse.json(
-        { error: 'Clé API Resend non configurée' },
-        { status: 500 }
-      )
-    }
-
-    // ✅ Créer un client Supabase serveur
-    const supabase = createClient(
+    // ✅ Créer un client Supabase SERVEUR avec SERVICE ROLE KEY
+    const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
 
-    const resend = new Resend(process.env.RESEND_API_KEY)
-
-    console.log('📦 Fetching devis:', devisId)
-
-    // ✅ Récupérer le devis avec toutes les données
-    const { data: devis, error: devisError } = await supabase
+    // ✅ Récupérer le devis depuis Supabase
+    const { data: devis, error: devisError } = await supabaseAdmin
       .from('devis')
       .select(`
         *,
@@ -49,150 +39,270 @@ export async function POST(req: NextRequest) {
       .single()
 
     if (devisError || !devis) {
-      console.error('❌ Devis not found:', devisError)
+      console.error('Erreur récupération devis:', devisError)
       return NextResponse.json(
         { error: 'Devis non trouvé' },
         { status: 404 }
       )
     }
 
-    console.log('✅ Devis found:', devis.numero_devis)
-
-    // ✅ Générer le PDF avec URL absolue correcte (côté serveur)
-    const baseUrl = process.env.VERCEL_URL 
-      ? `https://${process.env.VERCEL_URL}`
-      : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
-    
-    const pdfUrl = `${baseUrl}/api/devis/generate-pdf`
-    console.log('🔗 PDF URL:', pdfUrl)
-    
-    const pdfResponse = await fetch(pdfUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        devisData: {
-          numero_devis: devis.numero_devis,
-          date_creation: devis.date_creation,
-          montant_total_ht: devis.montant_total_ht,
-          montant_tva: devis.montant_tva,
-          montant_total_ttc: devis.montant_total_ttc,
-        },
-        lignes: devis.lignes || [],
-        clientData: {
-          nom: devis.clients?.nom,
-          adresse: devis.clients?.adresse,
-          code_postal: devis.clients?.code_postal,
-          ville: devis.clients?.ville,
-          tva_number: devis.clients?.tva_number,
-        },
-        entrepriseData: devis.entreprises || {},
-      }),
+    // ✅ Générer le PDF
+    const pdf = await generateDevisPDF({
+      devisData: {
+        numero_devis: devis.numero_devis,
+        date_creation: devis.date_creation,
+        montant_total_ht: devis.montant_total_ht,
+        montant_tva: devis.montant_tva,
+        montant_total_ttc: devis.montant_total_ttc,
+      },
+      lignes: devis.lignes || [],
+      clientData: {
+        nom: devis.clients?.nom,
+        adresse: devis.clients?.adresse,
+        code_postal: devis.clients?.code_postal,
+        ville: devis.clients?.ville,
+        tva_number: devis.clients?.tva_number,
+      },
+      entrepriseData: devis.entreprises || {},
     })
 
-    console.log('📄 PDF Response status:', pdfResponse.status)
+    const pdfBuffer = pdf.output('arraybuffer')
 
-    if (!pdfResponse.ok) {
-      const errorText = await pdfResponse.text()
-      console.error('❌ PDF generation failed:', {
-        status: pdfResponse.status,
-        error: errorText,
-      })
-      return NextResponse.json(
-        { error: 'Erreur génération PDF: ' + pdfResponse.status },
-        { status: 500 }
-      )
-    }
-
-    // ✅ CORRECTION : Récupérer le PDF en buffer et le convertir en base64
-    const pdfArrayBuffer = await pdfResponse.arrayBuffer()
-    const pdfBuffer = Buffer.from(pdfArrayBuffer)
-    const pdfBase64 = pdfBuffer.toString('base64')
-
-    console.log('✅ PDF generated successfully:', {
-      size: pdfArrayBuffer.byteLength,
-      base64Length: pdfBase64.length,
-    })
-
-    // ✅ Envoyer l'email avec Resend
-    console.log('📧 Sending email to:', email)
-
-    const result = await resend.emails.send({
-      from: process.env.RESEND_FROM_EMAIL || 'noreply@opus.boutique',
-      to: email,
-      subject: `Devis ${devis.numero_devis}`,
-      html: `
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <style>
-            body { font-family: Arial, sans-serif; color: #333; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background-color: #3b82f6; color: white; padding: 20px; border-radius: 8px 8px 0 0; }
-            .content { background-color: #f9fafb; padding: 20px; border-radius: 0 0 8px 8px; }
-            .details { margin: 20px 0; background-color: white; padding: 15px; border-radius: 5px; }
-            .total { font-size: 18px; font-weight: bold; color: #3b82f6; margin: 15px 0; }
-            .footer { text-align: center; padding: 20px; color: #999; font-size: 12px; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <div class="header">
-              <h1>Votre Devis OPUS</h1>
-            </div>
-            <div class="content">
-              <p>Bonjour <strong>${devis.clients?.nom}</strong>,</p>
-              
-              <p>Merci pour votre intérêt. Veuillez trouver ci-joint votre devis détaillé.</p>
-              
-              <div class="details">
-                <p><strong>Numéro:</strong> ${devis.numero_devis}</p>
-                <p><strong>Date:</strong> ${new Date(devis.date_creation).toLocaleDateString('fr-FR')}</p>
-              </div>
-
-              <div class="details">
-                <p><strong>Montant HT:</strong> ${devis.montant_total_ht.toFixed(2)}€</p>
-                <p><strong>TVA:</strong> ${devis.montant_tva.toFixed(2)}€</p>
-                <div class="total">Total TTC: ${devis.montant_total_ttc.toFixed(2)}€</div>
-              </div>
-
-              <p>Ce devis est valable 30 jours à compter de sa date d'émission.</p>
-              
-              <p>N'hésitez pas à nous contacter si vous avez des questions.</p>
-              
-              <p>Cordialement,<br>L'équipe OPUS</p>
-            </div>
-            <div class="footer">
-              <p>Cet email a été généré automatiquement. Le PDF est joint à cet email.</p>
-            </div>
-          </div>
-        </body>
-        </html>
-      `,
-      attachments: [
-        {
-          filename: `devis-${devis.numero_devis}.pdf`,
-          content: pdfBase64,
-        },
-      ],
-    })
-
-    if (result.error) {
-      console.error('❌ Resend error:', result.error)
-      throw new Error(result.error.message)
-    }
-
-    console.log('✅ Email sent successfully:', result.data?.id)
-
-    return NextResponse.json({ 
-      success: true, 
-      messageId: result.data?.id,
-      message: 'Email envoyé avec succès'
+    return new NextResponse(pdfBuffer, {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="devis-${devis.numero_devis}.pdf"`,
+      },
     })
   } catch (error) {
-    console.error('❌ Email Error:', error)
+    console.error('PDF Error:', error)
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Erreur envoi email' },
+      { error: error instanceof Error ? error.message : 'Erreur génération PDF' },
       { status: 500 }
     )
   }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const { devisData, lignes, clientData, entrepriseData } = await req.json()
+
+    if (!devisData || !lignes || !clientData) {
+      return NextResponse.json(
+        { error: 'Données manquantes' },
+        { status: 400 }
+      )
+    }
+
+    // ✅ Générer le PDF
+    const pdf = await generateDevisPDF({
+      devisData,
+      lignes,
+      clientData,
+      entrepriseData,
+    })
+
+    const pdfBuffer = pdf.output('arraybuffer')
+
+    return new NextResponse(pdfBuffer, {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="devis-${devisData.numero_devis}.pdf"`,
+      },
+    })
+  } catch (error) {
+    console.error('PDF Error:', error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Erreur génération PDF' },
+      { status: 500 }
+    )
+  }
+}
+
+/**
+ * ✅ Fonction générique pour générer le PDF devis
+ */
+async function generateDevisPDF({
+  devisData,
+  lignes,
+  clientData,
+  entrepriseData,
+}: {
+  devisData: any
+  lignes: LigneDevis[]
+  clientData: any
+  entrepriseData: any
+}) {
+  const pdf = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  })
+
+  const pageWidth = pdf.internal.pageSize.getWidth()
+
+  // ===== 1. HEADER AVEC LOGO =====
+  if (entrepriseData?.logo_url) {
+    await addLogoToHeader(pdf, entrepriseData.logo_url)
+  }
+
+  // ===== 2. TITRE DEVIS =====
+  pdf.setFontSize(24)
+  pdf.setTextColor(59, 130, 246)
+  pdf.text('DEVIS', pageWidth - 50, 20)
+
+  pdf.setFontSize(10)
+  pdf.setTextColor(0, 0, 0)
+  pdf.text(devisData.numero_devis, pageWidth - 50, 28)
+
+  // ===== 3. INFOS ENTREPRISE COMPLÈTES =====
+  let yPosition = addCompanyHeaderSection(pdf, entrepriseData, 50)
+
+  // ===== 4. INFOS DEVIS (côté droit) =====
+  pdf.setFontSize(9)
+  pdf.setFont('helvetica', 'normal')
+
+  yPosition = 50
+  const rightColumnX = pageWidth - 70
+
+  pdf.text(`Devis: ${devisData.numero_devis}`, rightColumnX, yPosition)
+  yPosition += 5
+  pdf.text(`Date: ${new Date(devisData.date_creation).toLocaleDateString('fr-FR')}`, rightColumnX, yPosition)
+  yPosition += 5
+  pdf.text('Validité: 30 jours', rightColumnX, yPosition)
+
+  // ===== 5. SECTION CLIENT =====
+  yPosition += 15
+  pdf.setFont('helvetica', 'bold')
+  pdf.setFontSize(10)
+  pdf.text('DEVIS ÉTABLI POUR:', 20, yPosition)
+  yPosition += 5
+
+  pdf.setFont('helvetica', 'normal')
+  pdf.setFontSize(9)
+  pdf.text(clientData.nom, 20, yPosition)
+  yPosition += 4
+
+  if (clientData.adresse) {
+    pdf.text(clientData.adresse, 20, yPosition)
+    yPosition += 4
+  }
+
+  if (clientData.code_postal && clientData.ville) {
+    pdf.text(`${clientData.code_postal} ${clientData.ville}`, 20, yPosition)
+    yPosition += 4
+  }
+
+  if (clientData.tva_number) {
+    pdf.text(`TVA: ${clientData.tva_number}`, 20, yPosition)
+    yPosition += 4
+  }
+
+  yPosition += 8
+
+  // ===== 6. TABLEAU DES PRESTATIONS =====
+  // En-têtes du tableau
+  pdf.setFont('helvetica', 'bold')
+  pdf.setFillColor(243, 244, 246)
+  pdf.rect(20, yPosition - 5, 170, 6, 'F')
+
+  pdf.setFontSize(9)
+  pdf.text('Désignation', 25, yPosition)
+  pdf.text('Quantité', 100, yPosition)
+  pdf.text('Prix unitaire', 125, yPosition)
+  pdf.text('TVA %', 150, yPosition)
+  pdf.text('Montant HT', 175, yPosition, { align: 'right' })
+
+  yPosition += 8
+  pdf.setFont('helvetica', 'normal')
+  pdf.setFontSize(9)
+
+  // Lignes du devis
+  lignes.forEach((ligne: LigneDevis) => {
+    if (yPosition > 250) {
+      pdf.addPage()
+      yPosition = 20
+    }
+
+    const montantHT = ligne.quantite * ligne.prix_unitaire
+
+    pdf.text(ligne.description.substring(0, 30), 25, yPosition)
+    pdf.text(ligne.quantite.toString(), 100, yPosition)
+    pdf.text(`${ligne.prix_unitaire.toFixed(2)}€`, 125, yPosition)
+    pdf.text(`${ligne.taux_tva}%`, 150, yPosition)
+    pdf.text(`${montantHT.toFixed(2)}€`, 175, yPosition, { align: 'right' })
+
+    yPosition += 7
+  })
+
+  // Ligne de séparation
+  pdf.setDrawColor(59, 130, 246)
+  pdf.line(20, yPosition, 190, yPosition)
+
+  // ===== 7. TOTAUX AVEC TVA PAR TAUX =====
+  yPosition += 8
+  pdf.setFont('helvetica', 'normal')
+  pdf.setFontSize(10)
+
+  const totals = calculateTotalsByVAT(lignes)
+
+  // Montant HT
+  pdf.text('Montant HT:', 130, yPosition)
+  pdf.text(`${totals.totalHT.toFixed(2)}€`, 185, yPosition, { align: 'right' })
+
+  yPosition += 7
+
+  // Détail TVA par taux
+  pdf.setFontSize(9)
+  Object.entries(totals.byRate).forEach(([rate, value]) => {
+    pdf.text(`TVA ${rate}% (${value.montantTVA.toFixed(2)}€):`, 130, yPosition)
+    pdf.text(`${value.montantTVA.toFixed(2)}€`, 185, yPosition, { align: 'right' })
+    yPosition += 5
+  })
+
+  yPosition += 2
+
+  // Total TTC
+  pdf.setFillColor(59, 130, 246)
+  pdf.rect(130, yPosition - 6, 60, 8, 'F')
+  pdf.setTextColor(255, 255, 255)
+  pdf.setFont('helvetica', 'bold')
+  pdf.setFontSize(11)
+  pdf.text('TOTAL TTC:', 135, yPosition)
+  pdf.text(`${totals.totalTTC.toFixed(2)}€`, 185, yPosition, { align: 'right' })
+
+  // ===== 8. CONDITIONS =====
+  yPosition += 15
+  pdf.setTextColor(0, 0, 0)
+  pdf.setFont('helvetica', 'bold')
+  pdf.setFontSize(9)
+  pdf.text('Conditions du devis:', 20, yPosition)
+
+  yPosition += 5
+  pdf.setFont('helvetica', 'normal')
+  pdf.setFontSize(8)
+
+  const conditions = [
+    'Validité du devis: 30 jours',
+    `Délai de paiement: ${entrepriseData?.conditions_paiement || 30} jours après signature`,
+    'TVA non applicable (franchise de base)',
+    'Devis accepté par signature du client',
+  ]
+
+  conditions.forEach((condition) => {
+    const wrapped = pdf.splitTextToSize(condition, pageWidth - 40)
+    wrapped.forEach((line: string) => {
+      if (yPosition > 270) {
+        pdf.addPage()
+        yPosition = 20
+      }
+      pdf.text(`• ${line}`, 20, yPosition)
+      yPosition += 4
+    })
+  })
+
+  // ===== 9. FOOTER AVEC INFOS LÉGALES =====
+  addLegalFooter(pdf, entrepriseData)
+
+  return pdf
 }
