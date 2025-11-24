@@ -74,11 +74,8 @@ export default function SignupPage() {
     setLoading(true)
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_APP_URL 
-        ? `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/signup`
-        : '/api/auth/signup'
-
-      const response = await fetch(apiUrl, {
+      // Utiliser une URL relative pour éviter les problèmes CORS
+      const response = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
@@ -189,9 +186,13 @@ export default function SignupPage() {
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-3 sm:top-3.5 text-slate-500 hover:text-slate-300 transition-colors"
+                    className="absolute right-3 top-3 sm:top-3.5 text-slate-500 hover:text-slate-400 transition-colors"
                   >
-                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    {showPassword ? (
+                      <EyeOff className="w-5 h-5" />
+                    ) : (
+                      <Eye className="w-5 h-5" />
+                    )}
                   </button>
                 </div>
                 {errors.password && (
@@ -211,7 +212,7 @@ export default function SignupPage() {
                     name="nomEntreprise"
                     value={formData.nomEntreprise}
                     onChange={handleChange}
-                    placeholder="Ex: ABC Plomberie"
+                    placeholder="Plomberie Dupont"
                     className={`w-full pl-10 pr-4 py-2.5 sm:py-3 rounded-lg bg-slate-900/50 border transition-colors outline-none text-sm ${
                       errors.nomEntreprise
                         ? 'border-red-500/50 focus:border-red-500'
