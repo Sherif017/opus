@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase-client'
 import { Card } from '@/components/ui/Card'
-import { MessageSquare, ChevronDown, StickyNote, Edit2, Send, X } from 'lucide-react'
+import { MessageSquare, ChevronDown, StickyNote, Edit2, Send, X, AlertCircle, CheckCircle, Clock } from 'lucide-react'
 
 interface Prospect {
   id: string
@@ -24,7 +24,7 @@ interface HistoriqueRelance {
   email_recipient: string
 }
 
-export default function RelancesPage() {
+export default function RelancesPageAdvanced() {
   const [prospects, setProspects] = useState<Prospect[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -39,7 +39,6 @@ export default function RelancesPage() {
   const [historiqueOpen, setHistoriqueOpen] = useState<string | null>(null)
   const [entrepriseName, setEntrepriseName] = useState('')
   const [senderEmail, setSenderEmail] = useState('')
-  const [expandedNotes, setExpandedNotes] = useState<string | null>(null)
   const [editingNotesId, setEditingNotesId] = useState<string | null>(null)
   const [formData, setFormData] = useState({
     notes: '',
@@ -50,7 +49,6 @@ export default function RelancesPage() {
       setLoading(true)
       setError(null)
 
-      // ✅ Vérifier la session
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
         setError('❌ Vous n\'êtes pas connecté')
@@ -58,7 +56,6 @@ export default function RelancesPage() {
         return
       }
 
-      // ✅ Appeler l'API sécurisée avec le token
       const response = await fetch('/api/dashboard/relances', {
         method: 'GET',
         headers: {
@@ -78,8 +75,6 @@ export default function RelancesPage() {
       const { prospects: prospectsData, companyName } = await response.json()
       setProspects(prospectsData || [])
       setEntrepriseName(companyName)
-
-      // Récupérer l'email d'envoi
       setSenderEmail(process.env.NEXT_PUBLIC_SENDER_EMAIL || 'noreply@opus.boutique')
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erreur inconnue'
@@ -94,12 +89,20 @@ export default function RelancesPage() {
     init()
   }, [init])
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text)
-    alert('Copié au presse-papiers!')
+  // Calculer le contexte du prospect pour l'IA
+  const getProspectContext = (prospect: Prospect) => {
+    const jours_depuis_contact = prospect.dernier_contact
+      ? Math.floor((Date.now() - new Date(prospect.dernier_contact).getTime()) / (1000 * 60 * 60 * 24))
+      : null
+
+    return {
+      valeur_potentielle: prospect.valeur_potentielle,
+      statut_pipeline: prospect.statut_pipeline,
+      notes: prospect.notes,
+      jours_depuis_contact: jours_depuis_contact,
+    }
   }
 
-  // Générer un message progressif selon le numéro de relance
   const generateRelance = async (prospect: Prospect) => {
     setGeneratingId(prospect.id)
 
@@ -113,6 +116,10 @@ export default function RelancesPage() {
         return
       }
 
+      const context = getProspectContext(prospect)
+
+      console.log(`📧 Generating relance ${numeroRelance}/3 with context:`, context)
+
       const response = await fetch('/api/ai/generate-relance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -122,6 +129,7 @@ export default function RelancesPage() {
           companyName: entrepriseName,
           prospectEmail: prospect.email || 'N/A',
           numeroRelance: numeroRelance,
+          prospectContext: context,
         }),
       })
 
@@ -129,15 +137,19 @@ export default function RelancesPage() {
 
       if (!response.ok) throw new Error(data.error)
 
-      // Construire le corps complet du mail
+      // Construire le sujet adapté au numéro de relance
+      const sujets = {
+        1: `${entrepriseName} - Vous m'aviez intéressé`,
+        2: `${entrepriseName} - Quelques nouvelles fonctionnalités`,
+        3: `${entrepriseName} - Une dernière chose avant de vous laisser`,
+      }
+
       const corpsComplet = `Bonjour ${prospect.nom},
 
 ${data.relanceText}
 
-N'hésitez pas à nous contacter si vous avez des questions.
-
 Cordialement,
-${entrepriseName}`
+L'équipe ${entrepriseName}`
 
       setRelances(prev => ({
         ...prev,
@@ -145,7 +157,7 @@ ${entrepriseName}`
       }))
       setEditingMailId(prospect.id)
       setEditingMailData({
-        sujet: `Suivi - ${entrepriseName}`,
+        sujet: sujets[numeroRelance as keyof typeof sujets] || `Suivi - ${entrepriseName}`,
         corps: corpsComplet,
       })
     } catch (error) {
@@ -168,7 +180,9 @@ ${entrepriseName}`
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) throw new Error('Not authenticated')
 
-      // ✅ CORRECTION : Utiliser les bons paramètres d'API
+      const numRelances = prospect.relances_historique?.length || 0
+      const numeroRelance = numRelances + 1
+
       const response = await fetch('/api/emails/send-relance', {
         method: 'POST',
         headers: {
@@ -181,6 +195,8 @@ ${entrepriseName}`
           relanceText: editingMailData.corps,
           companyName: entrepriseName,
           sujet: editingMailData.sujet,
+          numeroRelance: numeroRelance,
+          prospectId: prospect.id,
         }),
       })
 
@@ -190,7 +206,7 @@ ${entrepriseName}`
         throw new Error(data.error || 'Erreur lors de l\'envoi')
       }
 
-      alert('Relance envoyée avec succès!')
+      alert('✅ Relance envoyée avec succès!')
       setEditingMailId(null)
       setEditingMailData({ sujet: '', corps: '' })
       setRelances(prev => {
@@ -228,10 +244,39 @@ ${entrepriseName}`
       const { data: updatedProspect } = await response.json()
       setProspects(prospects.map(p => p.id === prospect.id ? updatedProspect : p))
       setEditingNotesId(null)
-      alert('Notes mises à jour avec succès!')
+      alert('✅ Notes mises à jour!')
     } catch (error) {
       console.error('Error updating notes:', error)
       alert('Erreur: ' + (error instanceof Error ? error.message : 'Unknown'))
+    }
+  }
+
+  // Composant pour afficher le statut des relances
+  const RelanceStatus = ({ prospect }: { prospect: Prospect }) => {
+    const numRelances = prospect.relances_historique?.length || 0
+    const nextRelance = numRelances + 1
+
+    if (numRelances === 0) {
+      return (
+        <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+          <Clock className="w-4 h-4 text-blue-600" />
+          <span className="text-sm font-semibold text-blue-700">Aucune relance</span>
+        </div>
+      )
+    } else if (numRelances < 3) {
+      return (
+        <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
+          <AlertCircle className="w-4 h-4 text-amber-600" />
+          <span className="text-sm font-semibold text-amber-700">{numRelances}/3 relances</span>
+        </div>
+      )
+    } else {
+      return (
+        <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
+          <CheckCircle className="w-4 h-4 text-red-600" />
+          <span className="text-sm font-semibold text-red-700">3/3 relances (max atteint)</span>
+        </div>
+      )
     }
   }
 
@@ -265,31 +310,35 @@ ${entrepriseName}`
   return (
     <div className="space-y-8 p-6">
       <div>
-        <h1 className="text-4xl font-bold text-gray-900">Relances</h1>
-        <p className="text-gray-600 mt-2">Gérez vos relances auprès des prospects</p>
+        <h1 className="text-4xl font-bold text-gray-900">Relances IA</h1>
+        <p className="text-gray-600 mt-2">Gérez vos relances intelligentes auprès des prospects</p>
       </div>
 
       {prospects.length === 0 ? (
         <Card className="p-12 text-center">
           <MessageSquare className="w-12 h-12 text-gray-300 mx-auto mb-4" />
           <p className="text-gray-500 text-lg font-semibold">Aucun prospect</p>
-          <p className="text-gray-400 text-sm mt-2">Créez des prospects pour pouvoir gérer les relances</p>
+          <p className="text-gray-400 text-sm mt-2">Créez des prospects pour gérer les relances</p>
         </Card>
       ) : (
         <div className="grid gap-6">
           {prospects.map((prospect) => {
             const hasRelance = relances[prospect.id]
             const isEditingMail = editingMailId === prospect.id
-            const isNotesOpen = expandedNotes === prospect.id
             const numRelances = prospect.relances_historique?.length || 0
             const nextRelanceNumber = numRelances + 1
+            const isNotesOpen = editingNotesId === prospect.id
 
             return (
               <div key={prospect.id}>
                 <Card className="bg-white rounded-xl p-6 border border-gray-200 hover:shadow-lg transition-shadow">
                   <div className="flex items-start justify-between gap-4 flex-col sm:flex-row">
                     <div className="flex-1 w-full">
-                      <h3 className="text-xl font-bold text-gray-900">{prospect.nom}</h3>
+                      <div className="flex items-center gap-3 mb-2">
+                        <h3 className="text-xl font-bold text-gray-900">{prospect.nom}</h3>
+                        <RelanceStatus prospect={prospect} />
+                      </div>
+                      
                       <p className="text-sm text-gray-600 mt-1">{prospect.email || 'Email non disponible'}</p>
 
                       {prospect.dernier_contact && (
@@ -306,7 +355,7 @@ ${entrepriseName}`
 
                       {/* Notes Section */}
                       <div className="mt-4">
-                        {editingNotesId === prospect.id ? (
+                        {isNotesOpen ? (
                           <div className="space-y-3">
                             <textarea
                               value={formData.notes}
@@ -331,8 +380,8 @@ ${entrepriseName}`
                           </div>
                         ) : (
                           <>
-                            {isNotesOpen && prospect.notes && (
-                              <div className="mt-3 p-3 bg-amber-50 rounded border-l-4 border-amber-400">
+                            {prospect.notes && (
+                              <div className="p-3 bg-amber-50 rounded border-l-4 border-amber-400">
                                 <p className="text-gray-800 text-sm whitespace-pre-wrap">{prospect.notes}</p>
                               </div>
                             )}
@@ -363,7 +412,7 @@ ${entrepriseName}`
                               disabled={generatingId === prospect.id}
                               className="px-4 py-2 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-lg font-semibold text-sm transition-colors disabled:opacity-50"
                             >
-                              {generatingId === prospect.id ? '⏳ Gen...' : `✨ Relance ${nextRelanceNumber}`}
+                              {generatingId === prospect.id ? '⏳ Génération...' : `✨ Relance ${nextRelanceNumber}/3`}
                             </button>
                           )
                         ) : null}
@@ -378,8 +427,11 @@ ${entrepriseName}`
                     <div className="flex items-center gap-2 mb-4">
                       <Edit2 className="w-5 h-5 text-amber-600" />
                       <h3 className="text-lg font-bold text-amber-900">
-                        Éditer Relance #{nextRelanceNumber} - {prospect.nom}
+                        Relance #{nextRelanceNumber} - {prospect.nom}
                       </h3>
+                      <span className="ml-auto text-sm px-3 py-1 bg-amber-200 text-amber-900 rounded-full font-semibold">
+                        {nextRelanceNumber === 1 ? '🤝 Doux' : nextRelanceNumber === 2 ? '⚡ Progressif' : '🎯 Final'}
+                      </span>
                     </div>
 
                     <div className="space-y-4">
@@ -393,7 +445,7 @@ ${entrepriseName}`
                           value={editingMailData.sujet}
                           onChange={(e) => setEditingMailData(prev => ({ ...prev, sujet: e.target.value }))}
                           className="w-full px-4 py-3 border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
-                          placeholder="Ex: Suivi - Opus"
+                          placeholder="Objet du mail"
                         />
                       </div>
 
@@ -405,11 +457,11 @@ ${entrepriseName}`
                         <textarea
                           value={editingMailData.corps}
                           onChange={(e) => setEditingMailData(prev => ({ ...prev, corps: e.target.value }))}
-                          className="w-full px-4 py-3 border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 resize-vertical min-h-[200px] bg-white"
+                          className="w-full px-4 py-3 border border-amber-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 resize-vertical min-h-[250px] bg-white"
                         />
                       </div>
 
-                      {/* Prévisualisation */}
+                      {/* Aperçu */}
                       <div className="bg-white border-2 border-amber-200 rounded-lg p-4 max-h-80 overflow-y-auto">
                         <p className="text-xs font-bold text-amber-900 mb-3">📧 Aperçu :</p>
                         <div className="bg-gray-50 p-4 rounded text-sm text-gray-800 space-y-2 border border-gray-300">
@@ -429,7 +481,7 @@ ${entrepriseName}`
                           className="flex-1 px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                         >
                           <Send className="w-4 h-4" />
-                          {sendingId === prospect.id ? 'Envoi...' : 'Envoyer'}
+                          {sendingId === prospect.id ? 'Envoi...' : `Envoyer Relance ${nextRelanceNumber}`}
                         </button>
                         <button
                           onClick={() => {
@@ -459,7 +511,7 @@ ${entrepriseName}`
                       <div className="flex items-center gap-3">
                         <span className="text-lg">📬</span>
                         <span className="font-bold text-gray-700">
-                          Historique ({numRelances})
+                          Historique des relances ({numRelances})
                         </span>
                       </div>
                       <ChevronDown className={`w-5 h-5 text-gray-500 transition-transform ${historiqueOpen === prospect.id ? 'rotate-180' : ''}`} />
@@ -470,7 +522,14 @@ ${entrepriseName}`
                         {prospect.relances_historique?.map((relance) => (
                           <div key={relance.id} className="bg-gray-50 p-4 rounded-lg border-l-4 border-blue-400">
                             <div className="flex items-center justify-between mb-2">
-                              <p className="font-bold text-gray-800">#{relance.numero_relance}</p>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-gray-800 px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm">
+                                  Relance #{relance.numero_relance}
+                                </span>
+                                {relance.numero_relance === 1 && <span className="text-xs text-gray-500">🤝 Doux</span>}
+                                {relance.numero_relance === 2 && <span className="text-xs text-gray-500">⚡ Progressif</span>}
+                                {relance.numero_relance === 3 && <span className="text-xs text-gray-500">🎯 Final</span>}
+                              </div>
                               <p className="text-xs text-gray-500">
                                 {new Date(relance.date_envoi).toLocaleDateString('fr-FR', {
                                   year: 'numeric',
